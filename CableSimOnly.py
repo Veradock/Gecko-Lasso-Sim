@@ -1,3 +1,4 @@
+# TODO: clean up the code, clean up the visualization, and record!!
 """
 MuJoCo Cable Wrapping Simulation - Native Physics Version
 
@@ -11,28 +12,27 @@ Run:
     python cable_wrapping_sim.py
 """
 
+from pathlib import Path
+
 import mujoco
 import mujoco.viewer
 import numpy as np
 import matplotlib.pyplot as plt
-import time
+import trimesh
 
 # ============================================================================
 # SIMULATION PARAMETERS
 # ============================================================================
-
-CYLINDER_RADIUS = 2.0      # meters
-CYLINDER_HEIGHT = 10.0     # meters
-CYLINDER_OMEGA = 1.0       # rad/s rotation speed
-
-CABLE_ORIGIN = np.array([10.0, 0.0, 0.0])  # Fixed point in space
-ATTACHMENT_HEIGHT = -2.0   # 2m below origin (origin at z=0, attachment at z=-2)
+CYLINDER_OMEGA = 1       # rad/s rotation speed
 
 CABLE_SEGMENT_LENGTH = 0.3  # Length of each cable segment
 CABLE_RADIUS = 0.03         # Physical radius of cable
 NODE_RADIUS = 0.04          # Visual radius of nodes
 
-MAX_SEGMENTS = 50           # Maximum number of pre-allocated cable segments
+SAT_ATTACH_PT = np.array([-1.8, 0, -1])
+AV_INIT_POS = np.array([-1.8, 2 * 1.8, 0])
+
+MAX_SEGMENTS = 200           # Maximum number of pre-allocated cable segments
 
 # Cable physical properties
 CABLE_MASS = 0.05           # Mass per segment (kg)
@@ -40,52 +40,57 @@ CABLE_MASS = 0.05           # Mass per segment (kg)
 # Friction coefficients (MuJoCo format: sliding, torsional, rolling)
 CABLE_FRICTION = [0.5, 0.01, 0.01]
 
+# Build spatial tendons connecting adjacent segments
+# Only initially active tendons are between active segments
+SPRING_STIFFNESS = 50000.0  # N/m - stiff spring
+
+# Use an overdamped system (5x critical damping)
+SPRING_DAMPING = 5 * 2 * np.sqrt(CABLE_MASS * SPRING_STIFFNESS)  # Ns/m
+TIME_STEP = 0.00005
+IMP_RATIO = 2
+SAT_ROT_AX = np.array((0, 1, 1))
+
+# For equilibrium with 10N tension and k=10000 N/m:
+SPOOL_TENSION = 10
+EQUILIBRIUM_STRETCH_PER_LINK = SPOOL_TENSION / SPRING_STIFFNESS  # 0.001m
+EQUILIBRIUM_LINK_LENGTH = CABLE_SEGMENT_LENGTH + EQUILIBRIUM_STRETCH_PER_LINK  # 0.301m
+
+def load_mesh(path: Path):
+    # Loads a mesh from a .obj file. This function ensures that the origin of the body is placed at the center of mass.
+    mesh = trimesh.load(path, force="mesh")
+    mesh.apply_translation(-mesh.center_mass)
+    temp_export_file = path.parent / ("._Repositioned_" + path.name)
+    mesh.export(temp_export_file)
+    return temp_export_file
+
 
 def create_model_xml():
-    # Initial attachment point position
-    attach_pos = np.array([CYLINDER_RADIUS, 0.0, ATTACHMENT_HEIGHT])
-
     # Vector from attachment toward origin
-    to_origin_vec = CABLE_ORIGIN - attach_pos
-    to_origin_dir = to_origin_vec / np.linalg.norm(to_origin_vec)
+    anchor_av_init_dir = AV_INIT_POS - SAT_ATTACH_PT
+    init_cable_max_len = np.linalg.norm(anchor_av_init_dir)
+    anchor_av_init_dir /= init_cable_max_len
 
-    # Direction behind the spool-out point (away from cylinder, past origin)
-    behind_dir = to_origin_dir
-
-    # Number of segments: calculate so chain ends before origin with room for free link
-    # Distance from attach to origin
-    attach_to_origin = np.linalg.norm(CABLE_ORIGIN - attach_pos)
-
-    # For equilibrium with 10N tension and k=10000 N/m:
-    SPOOL_TENSION = 10.0
-    SPRING_STIFFNESS = 10000.0
-    EQUILIBRIUM_STRETCH_PER_LINK = SPOOL_TENSION / SPRING_STIFFNESS  # 0.001m
-    EQUILIBRIUM_LINK_LENGTH = CABLE_SEGMENT_LENGTH + EQUILIBRIUM_STRETCH_PER_LINK  # 0.301m
-
-    # Calculate number of segments so spool is ~0.5m before origin (leaving room for free link)
-    desired_chain_length = attach_to_origin - 0.5  # leave 0.5m for free link
-    init_segments = int(desired_chain_length / EQUILIBRIUM_LINK_LENGTH) + 1  # +1 because we count nodes not links
+    # Calculate number of segments so spool is just a little bit in front of the origin. This ensures the free
+    # link is created in the right direction and has some (short) length
+    max_len_to_chain = init_cable_max_len - EQUILIBRIUM_LINK_LENGTH * 0.1
+    init_segments = int(max_len_to_chain / EQUILIBRIUM_LINK_LENGTH) + 1  # +1 because of the sign post problem
 
     # Calculate positions for each node at equilibrium spacing
     active_positions = []
-    for i in range(init_segments):
-        pos = attach_pos + to_origin_dir * (i * EQUILIBRIUM_LINK_LENGTH)
+    for i in range(0, init_segments):
+        pos = SAT_ATTACH_PT + anchor_av_init_dir * (i * EQUILIBRIUM_LINK_LENGTH)
         active_positions.append(pos)
 
-    active_positions[0] = attach_pos.copy()
-
     # Spool is at the end of the chain - free link goes from spool to origin
-    spool_pos = active_positions[-1]
-    free_link_length = np.linalg.norm(CABLE_ORIGIN - spool_pos)
-
-    print(f"DEBUG: attach_to_origin={attach_to_origin:.4f}m")
-    print(f"DEBUG: init_segments={init_segments}")
-    print(f"DEBUG: equilibrium link length={EQUILIBRIUM_LINK_LENGTH:.4f}m")
-    print(f"DEBUG: spool pos={spool_pos}")
-    print(f"DEBUG: free link length={free_link_length:.4f}m")
+    # print(f"DEBUG: attach_to_origin={attach_to_origin:.4f}m")
+    # print(f"DEBUG: init_segments={init_segments}")
+    # print(f"DEBUG: equilibrium link length={EQUILIBRIUM_LINK_LENGTH:.4f}m")
+    # print(f"DEBUG: spool pos={spool_pos}")
+    # print(f"DEBUG: free link length={free_link_length:.4f}m")
 
     # Build cable bodies with sites
     cable_bodies = ""
+    cable_tendons = ""
     for i in range(MAX_SEGMENTS):
         if i < init_segments:
             pos = active_positions[i]
@@ -96,8 +101,8 @@ def create_model_xml():
             else:
                 color = "1 1 0 1"
         else:
-            offset = (i - init_segments + 1) * CABLE_SEGMENT_LENGTH
-            pos = CABLE_ORIGIN + behind_dir * offset
+            # This must go off of AV_INIT_POS since the length of the free link is not prescribed
+            pos = AV_INIT_POS + ((i - init_segments) * EQUILIBRIUM_LINK_LENGTH) * anchor_av_init_dir
             color = "0.5 0.5 0.5 1"
 
         cable_bodies += f"""
@@ -105,163 +110,174 @@ def create_model_xml():
             <freejoint name="cable_free_{i}"/>
             <geom name="cable_geom_{i}" type="sphere" size="{NODE_RADIUS}" mass="{CABLE_MASS}"
                   friction="{CABLE_FRICTION[0]} {CABLE_FRICTION[1]} {CABLE_FRICTION[2]}"
-                  rgba="{color}" contype="1" conaffinity="2"/>
-            <site name="cable_site_{i}" pos="0 0 0" size="0.01"/>
+                  rgba="{color}" condim="6" contype="1" conaffinity="2"/>
+            <site name="cable_site_{i}" pos="0 0 0" size="0.005"/>
         </body>
-"""
+        """
 
-    # Build spatial tendons connecting adjacent segments
-    # Only initially active tendons are between active segments
-    SPRING_STIFFNESS = 10000.0  # N/m - stiff spring
-    SPRING_DAMPING = 1000.0     # Ns/m - increased damping for stability
+        if i < MAX_SEGMENTS - 1:  # There are only MAX_SEGMENTS - 1 tendons, again, because of the signpost problem
+            cable_tendons += f"""
+            <spatial name="cable_tendon_{i}" springlength="{CABLE_SEGMENT_LENGTH}" stiffness="{SPRING_STIFFNESS}" damping="{SPRING_DAMPING}" limited="false">
+                <site site="cable_site_{i}"/>
+                <site site="cable_site_{i+1}"/>
+            </spatial>"""
 
-    cable_tendons = ""
-    for i in range(MAX_SEGMENTS - 1):
-        # Use range attribute to limit tendon force to tension only (no compression)
-        # Set springlength to create rest length of CABLE_SEGMENT_LENGTH
-        cable_tendons += f"""
-        <spatial name="cable_tendon_{i}" springlength="{CABLE_SEGMENT_LENGTH}" stiffness="{SPRING_STIFFNESS}" damping="{SPRING_DAMPING}" limited="true" range="0 100">
-            <site site="cable_site_{i}"/>
-            <site site="cable_site_{i+1}"/>
-        </spatial>"""
+    # Load the mesh files, taking care to reposition the bodies to the origin
+    cwd = Path.cwd()
+    sat_obj_file = load_mesh(cwd / "3DModels" / "SatelliteNGPayload.obj")
+    av_obj_file = load_mesh(cwd / "3DModels" / "AV_1_0p5_0p5.obj")
 
-    # Attachment constraint only - connect segment 0 to cylinder
+    # Next build the main XML defining the simulation
     xml = f"""
-<mujoco model="cable_wrapping_springs">
-    <option gravity="0 0 0" timestep="0.002" integrator="implicit" cone="elliptic" impratio="10">
-        <flag warmstart="enable"/>
-    </option>
-    
-    <size nconmax="500" njmax="2000" nstack="2000000"/>
-    
-    <visual>
-        <global offwidth="1920" offheight="1080"/>
-        <quality shadowsize="4096"/>
-        <map force="0.1" zfar="100"/>
-    </visual>
-    
-    <default>
-        <geom condim="4" friction="{CABLE_FRICTION[0]} {CABLE_FRICTION[1]} {CABLE_FRICTION[2]}"/>
-    </default>
-    
-    <asset>
-        <texture type="skybox" builtin="gradient" rgb1="0.1 0.1 0.2" rgb2="0.3 0.3 0.4" width="512" height="512"/>
-        <material name="cylinder_mat" rgba="0.3 0.5 0.8 0.8"/>
-        <material name="ground_mat" rgba="0.2 0.2 0.2 1" reflectance="0.1"/>
-    </asset>
-    
-    <worldbody>
-        <geom type="plane" size="20 20 0.1" pos="0 0 -6" material="ground_mat" contype="0" conaffinity="0"/>
+    <mujoco model="Gecko Lasso Simulation">
+        <option gravity="0 0 0" timestep="{TIME_STEP}" integrator="implicit" cone="elliptic" impratio="{IMP_RATIO}"/>
         
-        <site name="cable_origin" pos="{CABLE_ORIGIN[0]} {CABLE_ORIGIN[1]} {CABLE_ORIGIN[2]}" size="0.06" rgba="0 1 0 1"/>
+        <visual>
+            <global offwidth="1920" offheight="1080"/>
+            <quality shadowsize="4096"/>
+        </visual>
         
-        <body name="cylinder" pos="0 0 0">
-            <joint name="cylinder_rotation" type="hinge" axis="0 0 1" damping="0"/>
-            <geom name="cylinder_geom" type="cylinder" size="{CYLINDER_RADIUS} {CYLINDER_HEIGHT/2}" material="cylinder_mat" 
-                  contype="2" conaffinity="1" friction="{CABLE_FRICTION[0]} {CABLE_FRICTION[1]} {CABLE_FRICTION[2]}" condim="4"/>
-            <site name="attachment_point" pos="{CYLINDER_RADIUS} 0 {ATTACHMENT_HEIGHT}" size="0.05" rgba="1 0.5 0 1"/>
-            <body name="attachment_body" pos="{CYLINDER_RADIUS} 0 {ATTACHMENT_HEIGHT}">
-                <geom name="attachment_geom" type="sphere" size="0.01" mass="0.001" contype="0" conaffinity="0" rgba="0 0 0 0"/>
+        <asset>
+            <texture type="skybox" builtin="gradient" rgb1="0.1 0.1 0.2" rgb2="0.3 0.3 0.4" width="512" height="512"/>
+            <material name="cylinder_mat" rgba="0.3 0.5 0.8 0.8"/>
+            <material name="ground_mat" rgba="0.2 0.2 0.2 1" reflectance="0.1"/>
+            <mesh name="sat_mesh" file="{sat_obj_file}"/>
+            <mesh name="av_mesh" file="{av_obj_file}"/>
+        </asset>
+        
+        <worldbody>
+            <geom type="plane" size="20 20 0.1" pos="0 0 -6" material="ground_mat" contype="0" conaffinity="0"/>
+            
+             <body name="av_body" pos="{AV_INIT_POS[0]} {AV_INIT_POS[1]} {AV_INIT_POS[2]}">
+                <freejoint name="av_free_joint"/>
+                <geom type="mesh" mesh="av_mesh" contype="4" conaffinity="2" friction="0 0 0" condim="6" rgba="0.2 0.2 0.9 1"/>
+                <site name="cable_origin" pos="0 0 0" size="0.06" rgba="0 1 0 1"/>
             </body>
-        </body>
-        
-{cable_bodies}
-    </worldbody>
-    
-    <tendon>
-{cable_tendons}
-    </tendon>
-    
-    <equality>
-        <connect name="cable_attachment" body1="cable_0" body2="attachment_body" 
-                 anchor="0 0 0" solref="0.0005 1" solimp="0.99 0.999 0.0001"/>
-    </equality>
-    
-    <actuator>
-        <velocity name="cylinder_motor" joint="cylinder_rotation" kv="10000"/>
-    </actuator>
-</mujoco>
-"""
-    return xml, init_segments
 
+            
+            <body name="cylinder" pos="0 0 0">
+                <!-- <joint name="cylinder_rotation" type="hinge" axis="{SAT_ROT_AX[0]} {SAT_ROT_AX[1]} {SAT_ROT_AX[2]}" damping="0"/> -->
+                <freejoint name="cylinder_rotation"/>
+                <geom type="mesh" mesh="sat_mesh" contype="2" conaffinity="1" density="500000" 
+                    friction="{CABLE_FRICTION[0]} {CABLE_FRICTION[1]} {CABLE_FRICTION[2]}" condim="6" rgba="0.9 0.2 0.2 1"/>
+                
+                <site name="attachment_point" pos="{SAT_ATTACH_PT[0]} {SAT_ATTACH_PT[1]} {SAT_ATTACH_PT[2]}" size="0.05" rgba="1 0.5 0 1"/>
+                <body name="attachment_body" pos="{SAT_ATTACH_PT[0]} {SAT_ATTACH_PT[1]} {SAT_ATTACH_PT[2]}">
+                    <geom name="attachment_geom" type="sphere" size="0.01" mass="0.001" contype="0" conaffinity="0" rgba="0 0 0 0"/>
+                </body>
+            </body>
+            
+        {cable_bodies}
+        
+        </worldbody>
+        
+        <tendon>
+            {cable_tendons}
+        </tendon>
+        
+        <equality>
+            <connect name="cable_attachment" body1="cable_0" body2="attachment_body" 
+                     anchor="0 0 0" solref="0.0005 1" solimp="0.99 0.999 0.0001"/>
+        </equality>
+        
+        <!--actuator>
+            <velocity name="cylinder_motor" joint="cylinder_rotation" kv="10000"/>
+        </actuator-->
+    </mujoco>
+    """
+
+    return xml, init_segments, anchor_av_init_dir
+
+
+def get_thruster_reaction():
+    return (-10, 0, 0)
 
 class Simulation:
     def __init__(self):
-        self.xml, self.init_segments = create_model_xml()
-        self.model = mujoco.MjModel.from_xml_string(self.xml)
+        # Creates the model
+        self.xml, self.num_init_segments, anchor_av_init_dir = create_model_xml()
+        self.model = mujoco.MjModel.from_xml_string(self.xml, None)
         self.data = mujoco.MjData(self.model)
+
+        # Save the IDs of key elements of the model
+        self.cylinder_jnt_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "cylinder_rotation")
+        self.av_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "av_body")
+        self.av_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "av_free_joint")
+
+        # self.motor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, "cylinder_motor")
+
+        # Give bodies the proper initial conditions
+        qvel_addr = self.model.jnt_dofadr[self.cylinder_jnt_id]
+        sat_rot_dir = SAT_ROT_AX / np.linalg.norm(SAT_ROT_AX)
+        self.data.qvel[qvel_addr+3:qvel_addr+6] = CYLINDER_OMEGA * sat_rot_dir
+
+        # Move onto the nodes on the cables
+        init_vel_anchor = np.cross(SAT_ATTACH_PT, CYLINDER_OMEGA * sat_rot_dir)
+        init_vel_cable = -1 * anchor_av_init_dir * np.linalg.norm(init_vel_anchor)
+
+        # Applies the velocity at the attachment point
+        body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "cable_free_0")
+        qvel_addr = self.model.jnt_dofadr[body_id]
+        self.data.qvel[qvel_addr:qvel_addr + 3] = init_vel_anchor
+
+        # Applies the initial velocities along the cable
+        for string_node in range(1, self.num_init_segments - 1):
+            body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"cable_free_{string_node}")
+            qvel_addr = self.model.jnt_dofadr[body_id]
+
+            self.data.qvel[qvel_addr:qvel_addr + 3] = init_vel_cable
 
         # Forward pass to initialize physics state consistently
         mujoco.mj_forward(self.model, self.data)
-
-        self.cylinder_jnt_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "cylinder_rotation")
-        self.motor_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, "cylinder_motor")
+        # mujoco.mj_subtreeVel(self.model, self.data)
 
         self.cable_body_ids = []
         self.cable_geom_ids = []
+        self.cable_tendon_ids = []
+        self.cable_jnt_ids = []
         for i in range(MAX_SEGMENTS):
             self.cable_body_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f"cable_{i}"))
             self.cable_geom_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, f"cable_geom_{i}"))
+            self.cable_jnt_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"cable_free_{i}"))
 
-        # Get tendon IDs for spring connections
-        self.cable_tendon_ids = []
-        for i in range(MAX_SEGMENTS - 1):
-            self.cable_tendon_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_TENDON, f"cable_tendon_{i}"))
+            if i < MAX_SEGMENTS - 1:
+                self.cable_tendon_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_TENDON, f"cable_tendon_{i}"))
 
         # Deactivate tendons for inactive segments by setting stiffness to 0
-        for i in range(self.init_segments - 1, MAX_SEGMENTS - 1):
+        for i in range(self.num_init_segments - 1, MAX_SEGMENTS - 1):
             tendon_id = self.cable_tendon_ids[i]
-            self.model.tendon_stiffness[tendon_id] = 0.0
-            self.model.tendon_damping[tendon_id] = 0.0
+            self.model.tendon_stiffness[tendon_id] = 0
+            self.model.tendon_damping[tendon_id] = 0
 
-        self.spool_idx = self.init_segments - 1
-        self.active_count = self.init_segments
-        self.time = 0.0
-        self.wrap_count = 0.0
-
-        # Debug tracking for first two spawns
-        self.debug_first_spawn_time = None
-        self.debug_first_spawn_new_idx = None
-        self.debug_second_spawn_time = None
-        self.debug_second_spawn_new_idx = None
+        # Store the state of the cable unspooling
+        self.spool_idx = self.num_init_segments - 1
+        self.active_count = self.num_init_segments
 
         # Tension tracking
         self.tension_history = []
         self.time_history = []
 
-        print(f"Initialized: {self.active_count} segments, spool={self.spool_idx}")
-
     def _get_pos(self, idx):
         return self.data.xpos[self.cable_body_ids[idx]].copy()
 
     def step(self):
-        # TEMPORARILY DISABLE CYLINDER ROTATION for debugging
-        self.data.ctrl[self.motor_id] = CYLINDER_OMEGA  # Was: CYLINDER_OMEGA
-
         # Apply tension force on spool - must be done before mj_step
-        self._apply_spool_tension()
+        self._apply_tension_and_forces()
 
-        # Debug: investigate force balance on spool
-        if self.time < 0.02 or (self.time < 0.2 and int(self.time * 100) % 5 == 0):
-            self._debug_force_balance()
-
+        # Step forward
         mujoco.mj_step(self.model, self.data)
 
         self._maybe_spawn()
-        self._debug_first_spawn()
         self._record_tension()
-        self.wrap_count = self.data.qpos[self.cylinder_jnt_id] / (2 * np.pi)
-        self.time = self.data.time
 
     def _record_tension(self):
-        if self.time > 18.0:
-            return
+        self.time_history.append(self.data.time)
 
-        self.time_history.append(self.time)
-
+        """
         # Debug: print detailed info at specific times
         debug_times = [0.0, 0.1, 0.5, 1.0, 2.0, 3.0]
-        should_debug = any(abs(self.time - t) < 0.003 for t in debug_times)
+        # should_debug = any(abs(self.time - t) < 0.003 for t in debug_times)
+        should_debug = False
 
         if should_debug:
             print(f"\n=== TENSION DEBUG t={self.time:.3f}s ===")
@@ -270,7 +286,7 @@ class Simulation:
             # Check spool position
             spool_pos = self._get_pos(self.spool_idx)
             print(f"spool pos: {spool_pos}")
-            print(f"distance to origin: {np.linalg.norm(CABLE_ORIGIN - spool_pos):.4f}m")
+            # print(f"distance to origin: {np.linalg.norm(CABLE_ORIGIN - spool_pos):.4f}m")
 
             # Check last few tendon tensions
             print("Tendon tensions (last 5 active):")
@@ -281,6 +297,7 @@ class Simulation:
                 stretch = length - CABLE_SEGMENT_LENGTH
                 force = stiffness * stretch
                 print(f"  tendon {i}: length={length:.4f}, stretch={stretch:.6f}, force={force:.2f}N")
+        """
 
         # Get tendon forces
         tensions = []
@@ -288,60 +305,49 @@ class Simulation:
             if i < len(self.cable_tendon_ids):
                 tendon_id = self.cable_tendon_ids[i]
                 length = self.data.ten_length[tendon_id]
-                stiffness = self.model.tendon_stiffness[tendon_id]
                 stretch = length - CABLE_SEGMENT_LENGTH
-                force = stiffness * stretch
-                tensions.append(force)
+                tensions.append(SPRING_STIFFNESS * stretch)
             else:
-                tensions.append(0.0)
+                tensions.append(0)
 
-        # Add free link tension - the 10N applied force
-        tensions.append(10.0)  # We always apply 10N
+        # Add free link tension
+        tensions.append(SPOOL_TENSION)
 
         self.tension_history.append(tensions)
 
-    def _apply_spool_tension(self):
-        SPOOL_TENSION = 10.0  # Newtons
-
+    def _apply_tension_and_forces(self):
+        # STEP 1: Apply tension to the rope (and the corresponding opposing force on the AV)
         spool_pos = self._get_pos(self.spool_idx)
         body_id = self.cable_body_ids[self.spool_idx]
 
         # Direction from spool TOWARD origin (along the free link)
         # This pulls the spool away from the chain/cylinder, creating tension
-        toward_origin = CABLE_ORIGIN - spool_pos
+        toward_origin = self._get_AV_pos() - spool_pos
         dist = np.linalg.norm(toward_origin)
 
-        if dist > 1e-6:
-            direction = toward_origin / dist
-            force = direction * SPOOL_TENSION
+        # if dist > 1e-6:
+        direction = toward_origin / dist
+        force = direction * SPOOL_TENSION
 
-            # Clear any existing applied forces first
-            self.data.xfrc_applied[body_id, :] = 0
+        # Clear any existing applied forces first
+        self.data.xfrc_applied[body_id, :] = 0
 
-            # Use mj_applyFT to properly apply force and torque
-            force_vec = np.array(force, dtype=np.float64)
-            torque_vec = np.zeros(3, dtype=np.float64)
-            point = np.array(spool_pos, dtype=np.float64)
+        # Use mj_applyFT to properly apply force and torque
+        # force_vec = np.array(force, dtype=np.float64)
+        torque_vec = np.zeros(3, dtype=np.float64)
+        # point = np.array(spool_pos, dtype=np.float64)
 
-            # Create array to receive the generalized forces
-            qfrc_applied = np.zeros(self.model.nv, dtype=np.float64)
+        # Create array to receive the generalized forces
+        # Applies the forces to the rope
+        qfrc_applied = np.zeros(self.model.nv, dtype=np.float64)
+        mujoco.mj_applyFT(self.model, self.data, force, torque_vec, spool_pos, body_id, qfrc_applied)
 
+        # Now apply the reaction forces on the AV
+        mujoco.mj_applyFT(self.model, self.data, -1 * force + get_thruster_reaction(), torque_vec,
+                          self._get_AV_pos(), self.av_body_id, qfrc_applied)
+        self.data.qfrc_applied[:] = qfrc_applied  # Note this adds instead of re
 
-            mujoco.mj_applyFT(
-                self.model,
-                self.data,
-                force_vec,
-                torque_vec,
-                point,
-                body_id,
-                qfrc_applied
-            )
-
-
-            # Add the computed generalized forces to data.qfrc_applied
-            self.data.qfrc_applied[:] = qfrc_applied
-            # mujoco.mj_forward(self.model, self.data)
-
+    '''
     def _debug_force_balance(self):
         """Debug the force balance on the spool body."""
         spool_body_id = self.cable_body_ids[self.spool_idx]
@@ -510,64 +516,113 @@ class Simulation:
                 vel = self.data.cvel[self.cable_body_ids[idx], 3:6]
                 dist_from_origin = pos[0] - CABLE_ORIGIN[0]
                 print(f"  SPAWN2 t+{elapsed:.3f}s: pos_x={pos[0]:.4f}, dist={dist_from_origin:.4f}, vel_x={vel[0]:.4f}")
+    '''
+
+    def _get_AV_pos(self):
+        start_addr = self.model.jnt_dofadr[self.av_joint_id]
+        return self.data.qpos[start_addr:start_addr+3]
 
     def _maybe_spawn(self):
-        # TEMPORARILY DISABLED - chain length stays fixed
-        return
+        if self.active_count < MAX_SEGMENTS:
+            spool_pos = self._get_pos(self.spool_idx)
+
+            # Calculate free link length (spool to origin)
+            free_link_length = np.linalg.norm(self._get_AV_pos() - spool_pos)
+
+            if free_link_length > EQUILIBRIUM_LINK_LENGTH:
+                print(f"\n=== SPAWN TRIGGER t={self.data.time:.4f}s ===")
+                print(f"Free link length: {free_link_length:.4f}m > threshold {EQUILIBRIUM_LINK_LENGTH:.4f}m")
+                self._spawn_segment()
 
     def _spawn_segment(self):
+        # Forward the physics state. This must be done at the start AND at the end to get the proper location for the
+        # old spool
+        mujoco.mj_forward(self.model, self.data)
+
         new_idx = self.active_count
         old_spool = self.spool_idx
-        spawn_number = new_idx - self.init_segments + 1
+        # spawn_number = new_idx - self.init_segments + 1
 
-        old_spool_body_id = self.cable_body_ids[old_spool]
         old_spool_pos = self._get_pos(old_spool)
-        old_spool_vel = self.data.cvel[old_spool_body_id, 3:6].copy()
 
-        prev_seg_pos = self._get_pos(old_spool - 1)
-        prev_seg_vel = self.data.cvel[self.cable_body_ids[old_spool - 1], 3:6].copy()
+        # Get old spool velocity from qvel
+        old_joint_id = self.cable_jnt_ids[old_spool]
+        old_qvel_adr = self.model.jnt_dofadr[old_joint_id]
+        # old_spool_vel = self.data.qvel[old_qvel_adr:old_qvel_adr+3].copy()
 
-        print(f"SPAWN #{spawn_number}: new_idx={new_idx}, old_spool={old_spool}")
-        print(f"  old_spool pos: {old_spool_pos}")
-        print(f"  old_spool vel: {old_spool_vel}")
-        print(f"  prev_seg ({old_spool-1}) pos: {prev_seg_pos}")
-        print(f"  prev_seg ({old_spool-1}) vel: {prev_seg_vel}")
-        print(f"  dist old_spool to prev_seg: {np.linalg.norm(old_spool_pos - prev_seg_pos):.4f}")
+        # Calculate current free link length
+        # free_link_length = np.linalg.norm(CABLE_ORIGIN - old_spool_pos)
 
-        joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"cable_free_{new_idx}")
-        qpos_adr = self.model.jnt_qposadr[joint_id]
-        qvel_adr = self.model.jnt_dofadr[joint_id]
+        # print(f"\nSPAWN #{spawn_number}: new_idx={new_idx}, old_spool={old_spool}")
+        # print(f"  old_spool pos: {old_spool_pos}")
+        # print(f"  old_spool vel: {old_spool_vel}")
+        # print(f"  free link length at spawn: {free_link_length:.6f}m")
 
-        pre_spawn_pos = self.data.qpos[qpos_adr:qpos_adr+3].copy()
-        print(f"  new segment pre-spawn pos: {pre_spawn_pos}")
+        # Get new segment's joint addresses
+        qpos_adr = self.model.jnt_qposadr[self.cable_jnt_ids[new_idx]]
+        qvel_adr = self.model.jnt_dofadr[self.cable_jnt_ids[new_idx]]
 
-        attach_pos = np.array([CYLINDER_RADIUS, 0.0, ATTACHMENT_HEIGHT])
-        to_origin_dir = CABLE_ORIGIN - attach_pos
-        to_origin_dir = to_origin_dir / np.linalg.norm(to_origin_dir)
+        # Direction from old spool toward origin
+        toward_origin = self._get_AV_pos() - old_spool_pos
+        toward_origin_dir = toward_origin / np.linalg.norm(toward_origin)
 
-        SPAWN_OFFSET = 0.15
-        spawn_pos = CABLE_ORIGIN - to_origin_dir * SPAWN_OFFSET
+        # Position new spool at equilibrium distance from old spool, toward origin
+        spawn_pos = old_spool_pos + toward_origin_dir * EQUILIBRIUM_LINK_LENGTH
 
+        # new_free_link = np.linalg.norm(CABLE_ORIGIN - spawn_pos)
+
+        # Debug: check tendon length that will result
+        # tendon_length_will_be = np.linalg.norm(spawn_pos - old_spool_pos)
+
+        # print(f"  spawn pos: {spawn_pos}")
+        # rint(f"  new free link length: {new_free_link:.6f}m")
+        # print(f"  tendon length (old_spool to new): {tendon_length_will_be:.6f}m")
+        # print(f"  tendon rest length: {CABLE_SEGMENT_LENGTH}m")
+        # print(f"  tendon initial stretch: {tendon_length_will_be - CABLE_SEGMENT_LENGTH:.6f}m")
+        # print(f"  tendon initial force: {(tendon_length_will_be - CABLE_SEGMENT_LENGTH) * SPRING_STIFFNESS:.2f}N")
+
+        # Set new segment position and orientation
         self.data.qpos[qpos_adr:qpos_adr+3] = spawn_pos
         self.data.qpos[qpos_adr+3:qpos_adr+7] = [1, 0, 0, 0]
-        self.data.qvel[qvel_adr:qvel_adr+3] = old_spool_vel
-        self.data.qvel[qvel_adr+3:qvel_adr+6] = 0
+        print("ASSIGNING THE NEW SPOOL A POSITION OF " + str(spawn_pos))
 
+        # Set velocity to zero - the new spool emerges from the fixed origin point
+        # The free link represents cable being paid out, so the spool end starts stationary
+        # print(f"  assigning velocity: [0, 0, 0] (stationary - emerging from fixed origin)")
+        # self.data.qvel[qvel_adr:qvel_adr+3] = [0, 0, 0]
+        # self.data.qvel[qvel_adr+3:qvel_adr+6] = 0
+
+        # To result in smoother spawning, we will give the cable an initial velocity
+        self.data.qvel[qvel_adr:qvel_adr+3] = self.data.qvel[old_qvel_adr:old_qvel_adr+3]
+
+        # Activate tendon between old spool and new segment
+        tendon_id = self.cable_tendon_ids[old_spool]
+        print(f"  activating tendon {old_spool} (connects seg {old_spool} to seg {new_idx})")
+        self.model.tendon_stiffness[tendon_id] = SPRING_STIFFNESS
+        self.model.tendon_damping[tendon_id] = SPRING_DAMPING
+
+        # Update visual colors
         self.model.geom_rgba[self.cable_geom_ids[new_idx]] = [0, 1, 0, 1]
         self.model.geom_rgba[self.cable_geom_ids[old_spool]] = [1, 1, 0, 1]
 
+        # Update spool index and active count
         self.spool_idx = new_idx
         self.active_count = new_idx + 1
 
-        if spawn_number == 1:
-            self.debug_first_spawn_time = self.data.time
-            self.debug_first_spawn_new_idx = new_idx
-        elif spawn_number == 2:
-            self.debug_second_spawn_time = self.data.time
-            self.debug_second_spawn_new_idx = new_idx
+        # Debug: check state after mj_forward
+        # actual_tendon_length = self.data.ten_length[tendon_id]
+        # print(f"  POST mj_forward tendon length: {actual_tendon_length:.6f}m")
+        # print(f"  POST mj_forward old spool pos: {self._get_pos(old_spool)}")
+        # print(f"  new spool_idx: {self.spool_idx}, active_count: {self.active_count}")
 
+        # Now that the new spool is spawned, forward the state again. Forwarding twice is required to reduce tension
+        # spikes
+        mujoco.mj_forward(self.model, self.data)
+
+    """
     def get_info(self):
         return f"Time: {self.time:.2f}s | Wraps: {self.wrap_count:.2f} | Segments: {self.active_count}"
+    """
 
     def plot_tension(self):
         if not self.tension_history:
@@ -589,9 +644,11 @@ class Simulation:
         plt.figure(figsize=(14, 8))
 
         final_tensions = self.tension_history[-1]
-        num_constraints = len(final_tensions) - 1
+        # num_constraints = len(final_tensions) - 1
+        num_constraints = 50
 
-        num_to_plot = min(5, num_constraints)
+        # num_to_plot = min(5, num_constraints)
+        num_to_plot = num_constraints
         for j in range(num_to_plot):
             constraint_idx = num_constraints - num_to_plot + j
             data = []
@@ -618,38 +675,25 @@ class Simulation:
         plt.show()
 
     def render_cable(self, scene):
-        if scene.ngeom >= scene.maxgeom:
-            return
-
         spool_pos = self._get_pos(self.spool_idx)
-        if np.all(np.isfinite(spool_pos)):
-            dist = np.linalg.norm(spool_pos - CABLE_ORIGIN)
-            if dist > 1e-6:
-                g = scene.geoms[scene.ngeom]
-                mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, CABLE_RADIUS,
-                    CABLE_ORIGIN.reshape(3,1), spool_pos.reshape(3,1))
-                g.rgba[:] = [0.7, 0.1, 0.1, 1.0]
-                scene.ngeom += 1
+
+        g = scene.geoms[scene.ngeom]
+        # mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, CABLE_RADIUS,
+        #     self._get_AV_pos().reshape(3,1), spool_pos.reshape(3,1))
+        mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, CABLE_RADIUS, self._get_AV_pos(), spool_pos)
+        g.rgba[:] = [0.7, 0.1, 0.1, 1.0]
+        scene.ngeom += 1
 
         for i in range(self.spool_idx):
-            if scene.ngeom >= scene.maxgeom:
-                break
-
             p1 = self._get_pos(i)
             p2 = self._get_pos(i + 1)
 
-            if not np.all(np.isfinite(p1)) or not np.all(np.isfinite(p2)):
-                continue
-
-            dist = np.linalg.norm(p2 - p1)
-            if dist < 1e-6:
-                continue
-
             g = scene.geoms[scene.ngeom]
-            mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, CABLE_RADIUS,
-                p1.reshape(3,1), p2.reshape(3,1))
+            # mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, CABLE_RADIUS, p1.reshape(3,1), p2.reshape(3,1))
+            mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, CABLE_RADIUS, p1, p2)
             g.rgba[:] = [0.9, 0.2, 0.1, 1.0]
             scene.ngeom += 1
+
 
 
 def main():
@@ -666,6 +710,7 @@ def main():
         viewer.cam.lookat[:] = [0, 0, 0]
 
         frame = 0
+        viewer.opt.frame = mujoco.mjtFrame.mjFRAME_WORLD
         while viewer.is_running():
             sim.step()
 
@@ -674,17 +719,16 @@ def main():
                 sim.render_cable(viewer.user_scn)
 
             frame += 1
-            if frame % 500 == 0:
-                print(sim.get_info())
+            # if frame % 500 == 0:
+            #     print(sim.get_info())
 
-            if sim.time > 18 and not hasattr(sim, 'plotted'):
+            if sim.data.time > 1 and not hasattr(sim, 'plotted'):
                 sim.plot_tension()
                 sim.plotted = True
 
             viewer.sync()
-            time.sleep(0.002)
 
-    print(f"Final: {sim.get_info()}")
+    # print(f"Final: {sim.get_info()}")
 
 
 if __name__ == "__main__":
