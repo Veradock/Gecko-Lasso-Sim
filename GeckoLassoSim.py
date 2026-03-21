@@ -12,6 +12,7 @@ Run:
 """
 
 from pathlib import Path
+from time import sleep
 
 import mujoco
 import mujoco.viewer
@@ -29,11 +30,13 @@ show_inactive_seg = False
 
 
 def load_mesh(path: Path):
-    # Loads a mesh from a .obj file. This function ensures that the origin of the body is placed at the center of mass.
     mesh = trimesh.load(path, force="mesh")
+    mesh.merge_vertices()
+    mesh.update_faces(mesh.unique_faces())
     mesh.apply_translation(-mesh.center_mass)
     temp_export_file = path.parent / ("._Repositioned_" + path.name)
     mesh.export(temp_export_file)
+
     return temp_export_file
 
 
@@ -63,8 +66,8 @@ class Simulation:
         self.time_step = time_step
         self.imp_ratio = imp_ratio
 
-        # Define visual parameters
-        self.cable_visual_radius = 0.03  # Physical radius of cable
+        # Define visual parameters — enlarged & brightened for Zoom visibility
+        self.cable_visual_radius = 0.07  # Increased from 0.03
         self.cable_node_visual_radius = 0.04  # Visual radius of nodes
 
         # Calculate the equilibrium length of the string
@@ -80,7 +83,7 @@ class Simulation:
         # Save the IDs of key elements of the model
         self.cylinder_jnt_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "cylinder_rotation")
         self.av_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "av_body")
-        self.av_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "av_free_joint")
+        # self.av_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "av_free_joint")
 
         # Get IDs for key nodes and joints in the simulation
         self.cable_body_ids = []
@@ -125,6 +128,14 @@ class Simulation:
         # Forward pass to initialize physics state consistently
         mujoco.mj_forward(self.model, self.data)
 
+        # Compute body masses for display (sum of all geom masses in the body subtree)
+        sat_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "cylinder")
+        self.sat_mass = self.model.body_subtreemass[sat_body_id]
+        self.av_mass = self.model.body_subtreemass[self.av_body_id]
+
+        # Track the current thruster reaction force for overlay display
+        self.current_thruster_force = np.zeros(3)
+
         # Deactivate tendons for inactive segments by setting stiffness to 0
         for i in range(self.num_init_segments - 1, self.max_seg_num - 1):
             tendon_id = self.cable_tendon_ids[i]
@@ -162,16 +173,10 @@ class Simulation:
         for i in range(self.max_seg_num):
             if i < init_segments:
                 pos = active_positions[i]
-                if i == 0:
-                    color = "1 0.5 0 1"
-                elif i == init_segments - 1:
-                    color = "0 1 0 1"
-                else:
-                    color = "1 1 0 1"
+                color = "1 1 0 0"  # Invisible — cable rendered by render_cable()
             else:
-                # This must go off of AV_INIT_POS since the length of the free link is not prescribed
                 pos = self.av_init_pos + ((i - init_segments) * self.seg_equilibrium_len) * anchor_av_init_dir
-                color = f"0.5 0.5 0.5 {int(show_inactive_seg)}"
+                color = "0.5 0.5 0.5 0"
 
             cable_bodies += f"""
             <body name="cable_{i}" pos="{pos[0]} {pos[1]} {pos[2]}">
@@ -193,9 +198,10 @@ class Simulation:
 
         # Load the mesh files, taking care to reposition the bodies to the origin
         cwd = Path.cwd()
-        sat_obj_file = load_mesh(cwd / "3DModels" / "SatelliteNGPayload.obj")
+        # sat_obj_file = load_mesh(cwd / "3DModels" / "SatelliteNGPayload.obj")
+        sat_obj_file = load_mesh(cwd / "3DModels" / "OffsetCMSatellite_NGPayload.obj")
         av_obj_file = load_mesh(cwd / "3DModels" / "AV_1_0p5_0p5.obj")
-        background_im_file = str(cwd / "3DModels" / "Earth3.png")
+        background_im_file = str(cwd / "3DModels" / "Earth5.png")
 
         # Next build the main XML defining the simulation
         xml = f"""
@@ -206,6 +212,7 @@ class Simulation:
 
             <visual>
                 <quality shadowsize="4096"/>
+                <headlight diffuse="0.5 0.5 0.5" specular="0.2 0.2 0.2" ambient="0.2 0.2 0.2"/>
             </visual>
 
             <asset>
@@ -215,17 +222,19 @@ class Simulation:
                 <!--material name="gecko_lasso_image_material" texture="gecko_lasso_texture" specular="1" shininess="0.5"/-->
                 
                 <material name="cylinder_mat" rgba="0.3 0.5 0.8 0.8"/>
+                <material name="sat_mat" rgba="0.78 0.82 0.88 1" emission="0.35" specular="0.3" shininess="0.15"/>
+                <material name="av_mat" rgba="0.3 0.55 0.95 1" emission="0.3" specular="0.3" shininess="0.15"/>
                 <material name="ground_mat" rgba="0.2 0.2 0.2 1" reflectance="0.1"/>
-                <mesh name="sat_mesh" file="{sat_obj_file}"/>
-                <mesh name="av_mesh" file="{av_obj_file}"/>
+                <mesh name="sat_mesh" file="{sat_obj_file}" inertia="exact"/>
+                <mesh name="av_mesh" file="{av_obj_file}" inertia="exact"/>
             </asset>
 
             <worldbody>
                 <!--geom type="plane" size="20 20 0.1" pos="0 0 -10" material="ground_mat" contype="0" conaffinity="0"/-->
 
                  <body name="av_body" pos="{self.av_init_pos[0]} {self.av_init_pos[1]} {self.av_init_pos[2]}">
-                    <freejoint name="av_free_joint"/>
-                    <geom type="mesh" mesh="av_mesh" contype="4" conaffinity="2" friction="0 0 0" condim="6" rgba="0.2 0.2 0.9 1"/>
+                    <!--freejoint name="av_free_joint"/-->
+                    <geom type="mesh" mesh="av_mesh" contype="4" conaffinity="2" friction="0 0 0" condim="6" material="av_mat"/>
                     <site name="cable_origin" pos="0 0 0" size="0.06" rgba="0 1 0 1"/>
                 </body>
 
@@ -234,7 +243,8 @@ class Simulation:
                     <freejoint name="cylinder_rotation"/>
                     <geom type="mesh" mesh="sat_mesh" contype="2" conaffinity="1"
                         density="2700" friction="{self.cable_friction[0]} {self.cable_friction[1]} 
-                        {self.cable_friction[2]}" condim="6" rgba="0.9 0.2 0.2 1"/>
+                        {self.cable_friction[2]}" condim="6" material="sat_mat" margin="0.002"
+                        solimp="0.99 0.999 0.001 0.5 2" solref="0.0005 1"/>  # Margin sets collisions to start 1 mm away from surface
 
                     <site name="attachment_point" pos="{self.sat_attach_pos[0]} {self.sat_attach_pos[1]} 
                             {self.sat_attach_pos[2]}" size="0.05" rgba="1 0.5 0 1"/>
@@ -320,13 +330,17 @@ class Simulation:
         mujoco.mj_applyFT(self.model, self.data, force, torque_vec, spool_pos, body_id, qfrc_applied)
 
         # Now apply the reaction forces on the AV
-        mujoco.mj_applyFT(self.model, self.data, self.thruster_react_func(force), torque_vec,
+        thruster_force = self.thruster_react_func(force)
+        self.current_thruster_force = thruster_force.copy()
+        mujoco.mj_applyFT(self.model, self.data, thruster_force, torque_vec,
                           self._get_av_pos(), self.av_body_id, qfrc_applied)
         self.data.qfrc_applied[:] = qfrc_applied  # Note this adds instead of re
 
     def _get_av_pos(self):
-        start_addr = self.model.jnt_dofadr[self.av_joint_id]
-        return self.data.qpos[start_addr:start_addr+3]
+        # start_addr = self.model.jnt_dofadr[self.av_joint_id]
+        # return self.data.qpos[start_addr:start_addr+3]
+
+        return self.av_init_pos[0], self.av_init_pos[1], self.av_init_pos[2]
 
     def _maybe_spawn(self):
         if self.active_count < self.max_seg_num:
@@ -377,9 +391,9 @@ class Simulation:
         self.model.tendon_stiffness[tendon_id] = self.cable_stiffness
         self.model.tendon_damping[tendon_id] = self.cable_damping
 
-        # Update visual colors
-        self.model.geom_rgba[self.cable_geom_ids[new_idx]] = [0, 1, 0, 1]
-        self.model.geom_rgba[self.cable_geom_ids[old_spool]] = [1, 1, 0, 1]
+        # Update visual colors (keep invisible — cable rendered by render_cable)
+        self.model.geom_rgba[self.cable_geom_ids[new_idx]] = [0, 1, 0, 0]
+        self.model.geom_rgba[self.cable_geom_ids[old_spool]] = [1, 1, 0, 0]
 
         # Update spool index and active count
         self.spool_idx = new_idx
@@ -436,10 +450,10 @@ class Simulation:
         self.data.qpos[qpos_adr + 3:qpos_adr + 7] = [1, 0, 0, 0]
         self.data.qvel[qvel_adr:qvel_adr + 6] = 0
 
-        # Update visual colors
+        # Update visual colors (keep invisible — cable rendered by render_cable)
         # TODO parameterize the colors
-        self.model.geom_rgba[self.cable_geom_ids[old_spool]] = [0.5, 0.5, 0.5, 0]  # Make invisible
-        self.model.geom_rgba[self.cable_geom_ids[new_spool]] = [0, 1, 0, 1]  # New spool is green
+        self.model.geom_rgba[self.cable_geom_ids[old_spool]] = [0.5, 0.5, 0.5, 0]
+        self.model.geom_rgba[self.cable_geom_ids[new_spool]] = [0, 1, 0, 0]
 
         # Update spool index and active count
         self.spool_idx = new_spool
@@ -484,12 +498,110 @@ class Simulation:
         plt.tight_layout()
         plt.show()
 
+    def render_overlay(self, scene, viewer):
+        """Render simulation parameters and live stats as floating 3D text labels.
+
+        Computes label positions dynamically from the current camera state so they
+        always appear on the right side of the screen, even if the user orbits, zooms,
+        or resizes the window.
+        """
+        # Normalized rotation axis for display
+        rot_norm = self.sat_rotation_axis / np.linalg.norm(self.sat_rotation_axis)
+
+        tf = self.current_thruster_force
+        tf_mag = np.linalg.norm(tf)
+
+        lines = [
+            "--- Initial Parameters ---",
+            f"Rot Axis: ({rot_norm[0]:.2f}, {rot_norm[1]:.2f}, {rot_norm[2]:.2f})",
+            f"Sat. Angular Vel: {self.sat_omega:.2f} rad/s",
+            f"Cable Tension: {self.cable_tension:.1f} N",
+            f"AV Pos: ({self.av_init_pos[0]:.2f}, {self.av_init_pos[1]:.2f}, {self.av_init_pos[2]:.2f})",
+            f"Attach Pt: ({self.sat_attach_pos[0]:.2f}, {self.sat_attach_pos[1]:.2f}, {self.sat_attach_pos[2]:.2f})",
+            f"Sat Mass: {self.sat_mass:.0f} kg",
+            f"AV Mass: {self.av_mass:.0f} kg",
+            "",
+            "--- Live Stats ---",
+            f"Time: {self.data.time:.1f} s",
+            # f"Active Segs: {self.active_count} / {self.max_seg_num}",
+            f"Thruster Force: ({tf[0]:.1f}, {tf[1]:.1f}, {tf[2]:.1f})",
+            # f"Thruster Mag: {tf_mag:.3f} N",
+        ]
+
+        # --- Compute camera basis vectors in world coordinates ---
+        # MuJoCo convention: azimuth=0 → looking along +x, azimuth=90 → looking along +y
+        # elevation > 0 → looking up, elevation < 0 → looking down
+        az = np.radians(viewer.cam.azimuth)
+        el = np.radians(viewer.cam.elevation)
+        dist = viewer.cam.distance
+        lookat = np.array(viewer.cam.lookat, dtype=np.float64)
+
+        # Forward (camera viewing) direction: the direction the camera looks toward
+        forward = np.array([
+            np.cos(el) * np.cos(az),
+            np.cos(el) * np.sin(az),
+            np.sin(el),
+        ])
+        forward /= np.linalg.norm(forward)
+
+        # Screen-right = forward × world_up (MuJoCo uses z-up)
+        world_up = np.array([0.0, 0.0, 1.0])
+        right = np.cross(forward, world_up)
+        r_norm = np.linalg.norm(right)
+        if r_norm < 1e-6:
+            right = np.array([1.0, 0.0, 0.0])
+        else:
+            right /= r_norm
+
+        # Screen-up = right × forward
+        up = np.cross(right, forward)
+        up /= np.linalg.norm(up)
+
+        # Compute the visible extents at the lookat plane
+        fovy = np.radians(self.model.vis.global_.fovy)
+        half_height = dist * np.tan(fovy / 2.0)
+
+        # Try to get actual viewport aspect ratio from the viewer; fall back to 16:9
+        try:
+            vp = viewer.viewport
+            aspect = vp.width / max(vp.height, 1)
+        except (AttributeError, TypeError):
+            aspect = 16.0 / 9.0
+
+        half_width = half_height * aspect
+
+        # Place labels on the right edge, upper portion of the view
+        # Text labels are left-anchored at the geom position, so offset slightly inward
+        base_pos = lookat + right * half_width * 0.45 + up * half_height * 0.75
+        line_spacing = half_height * 0.065  # Scale spacing with zoom level
+
+        for i, text in enumerate(lines):
+            if not text:
+                continue  # skip blank spacer lines
+            if scene.ngeom >= scene.maxgeom - 1:
+                break
+
+            pos = base_pos - up * (i * line_spacing)
+
+            g = scene.geoms[scene.ngeom]
+            mujoco.mjv_initGeom(
+                g,
+                mujoco.mjtGeom.mjGEOM_SPHERE,
+                np.array([0.001, 0, 0], dtype=np.float64),
+                pos,
+                np.eye(3, dtype=np.float64).flatten(),
+                np.array([0, 0, 0, 0], dtype=np.float32),
+            )
+            g.label = text
+            scene.ngeom += 1
+
     def render_cable(self, scene):
         spool_pos = self._get_pos(self.spool_idx)
 
         g = scene.geoms[scene.ngeom]
         mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, self.cable_visual_radius, self._get_av_pos(), spool_pos)
-        g.rgba[:] = [0.7, 0.1, 0.1, 1.0]
+        g.rgba[:] = [1.0, 0.4, 0.15, 1.0]
+        g.label = ""  # Clear stale label from previous frame
         scene.ngeom += 1
 
         for i in range(self.spool_idx):
@@ -498,7 +610,8 @@ class Simulation:
 
             g = scene.geoms[scene.ngeom]
             mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, self.cable_visual_radius, p1, p2)
-            g.rgba[:] = [0.9, 0.2, 0.1, 1.0]
+            g.rgba[:] = [1.0, 0.45, 0.15, 1.0]
+            g.label = ""  # Clear stale label from previous frame
             scene.ngeom += 1
 
 
@@ -511,7 +624,7 @@ if __name__ == "__main__":
     use_interactive_viewer = True
     view_tendons = False
 
-    sim = Simulation(sat_omega=1, sat_rotation_axis=(0, 1, 0.5))
+    sim = Simulation()
     # all_simulations = [,
     #                    Simulation(sat_omega=1, sat_rotation_axis=(0, 0, 1)),
     #                    Simulation(sat_omega=1, sat_rotation_axis=(0.1, 0, 1))]
@@ -519,44 +632,48 @@ if __name__ == "__main__":
 
     if use_interactive_viewer:
         with mujoco.viewer.launch_passive(sim.model, sim.data) as viewer:
-                viewer.cam.azimuth = 90
-                viewer.cam.elevation = -20
-                viewer.cam.distance = 25
-                viewer.cam.lookat[:] = [0, 0, 0]
-                # viewer.cam.azimuth = -10.5
-                # viewer.cam.elevation = -5
-                # viewer.cam.distance = 8.7
-                # viewer.cam.lookat[:] = [-20.9, 5.5, 2.3]
+            # viewer.cam.azimuth = 90
+            # viewer.cam.elevation = -20
+            # viewer.cam.distance = 25
+            # viewer.cam.lookat[:] = [0, 0, 0]
+            viewer.cam.azimuth = -0.8289683948863515
+            viewer.cam.elevation = -21.25310724431816
+            viewer.cam.distance = 34.68901593838663
+            viewer.cam.lookat[:] = [0, 5, 0]
 
-                viewer.opt.frame = mujoco.mjtFrame.mjFRAME_WORLD
-                viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_TENDON] = view_tendons
+            viewer.opt.frame = mujoco.mjtFrame.mjFRAME_WORLD
+            viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_TENDON] = view_tendons
+            sleep(10)
 
-                while viewer.is_running():
-                    sim.step()
+            while viewer.is_running():
+                sim.step()
 
-                    with viewer.lock():
-                        viewer.user_scn.ngeom = 0
-                        sim.render_cable(viewer.user_scn)
+                with viewer.lock():
+                    viewer.user_scn.ngeom = 0
+                    sim.render_cable(viewer.user_scn)
+                    sim.render_overlay(viewer.user_scn, viewer)
 
-
-                    if sim.data.time > 5 and not hasattr(sim, 'plotted'):
-                        sim.plot_tension()
-                        sim.plotted = True
-
-                    if sim.data.time > 60:
-                        exit()
-                    # if sim.data.time > 0.5:
-                    #     sim = all_simulations[sim_num]
-                    #     sim_num += 1
-
-                    #     with viewer.lock():
-                    #         viewer.m = sim.model
-                    #         viewer.d = sim.data
-
-                    #     viewer.sync()
+                
 
 
-                    viewer.sync()
+                if sim.data.time > 5 and not hasattr(sim, 'plotted'):
+                    sim.plot_tension()
+                    sim.plotted = True
+
+                if sim.data.time > 480:
+                    exit()
+                # if sim.data.time > 0.5:
+                #     sim = all_simulations[sim_num]
+                #     sim_num += 1
+
+                #     with viewer.lock():
+                #         viewer.m = sim.model
+                #         viewer.d = sim.data
+
+                #     viewer.sync()
+
+
+                viewer.sync()
 
     """
     else:
