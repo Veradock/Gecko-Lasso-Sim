@@ -1,3 +1,6 @@
+# DAMPING
+
+
 """
 Gecko Lasso Simulation — simulation of a cable wrapping, capturing, and detumbling a satellite
 M. Coughlin 2026 created for the BDML research group at Stanford University
@@ -27,6 +30,7 @@ import trimesh
 #########
 
 show_inactive_seg = False
+ENABLE_RECOMPILE = True  # Set True to allow runtime XML recompilation (slower but reclaims DOFs)
 
 
 def load_mesh(path: Path):
@@ -41,12 +45,12 @@ def load_mesh(path: Path):
 
 
 class Simulation:
-    def __init__(self, sat_omega: float = 1, sat_rotation_axis: tuple = (1, 0, 0.3),
-                 sat_attach_pos: tuple = (-1.8, 0, -2), av_init_pos: tuple = (-4.8, 10, 1),
-                 thruster_react_func = lambda torque_vec: -1 * torque_vec, cable_tension: float = 1,
-                 cable_stiffness: float = 7000, cable_damping: float = 30, cable_pt_mass: float = 0.000259,
-                 cable_friction: tuple = (0.5, 0.01, 0.01), cable_seg_len: float = 0.3, max_seg_num: int = 200,
-                 time_step: float = 0.0001, imp_ratio: float = 2):  # time_step: float = 0.000005
+    def __init__(self, sat_omega: float = 2, sat_rotation_axis: tuple = (0, 0.05, 1),
+                 sat_attach_pos: tuple = (-1.8, 0, -3), av_init_pos: tuple = (-7.8, 20, 5),
+                 thruster_react_func = lambda torque_vec: -1 * torque_vec, cable_tension: float = 10,
+                 cable_stiffness: float = 7000, cable_damping: float = 50, cable_pt_mass: float = 0.000259,
+                 cable_friction: tuple = (0.7, 0.2, 0.2), cable_seg_len: float = 0.5, max_seg_num: int = 1000,
+                 time_step: float = 0.00005, imp_ratio: float = 5):  # time_step: float = 0.000005
 
         # Density of Nylon is ~1100 kg/m^3; assume 0.001 M diameter
 
@@ -68,36 +72,79 @@ class Simulation:
 
         # Define visual parameters — enlarged & brightened for Zoom visibility
         self.cable_visual_radius = 0.07  # Increased from 0.03
-        self.cable_node_visual_radius = 0.04  # Visual radius of nodes
+        self.cable_node_visual_radius = 0.15  # Must be larger than cable_visual_radius to be visible
 
         # Calculate the equilibrium length of the string
         equilibrium_cable_stretch = self.cable_tension / self.cable_stiffness  # 0.001m
         self.seg_equilibrium_len = self.cable_seg_len + equilibrium_cable_stretch  # 0.301m
 
+        # Cache mesh paths so _create_model_xml doesn't reload them on every recompile
+        cwd = Path.cwd()
+        self._sat_obj_file = load_mesh(cwd / "3DModels" / "SatelliteNGPayload.obj")
+        self._av_obj_file = load_mesh(cwd / "3DModels" / "AV_1_0p5_0p5.obj")
+        self._background_im_file = str(cwd / "3DModels" / "Earth5.png")
 
-        # Creates the model
-        self.xml, self.num_init_segments, anchor_av_init_dir = self._create_model_xml()
+        # Recompilation buffer — how many extra segments to compile beyond active count
+        self.recompile_buffer = 5
+
+        # Compute initial segment count and direction (needed before first compile)
+        anchor_av_init_dir = self.av_init_pos - self.sat_attach_pos
+        init_cable_max_len = np.linalg.norm(anchor_av_init_dir)
+        anchor_av_init_dir /= init_cable_max_len
+        # Chain covers (1 - free_link_fraction) of the initial cable length.
+        # free_link_fraction=0.7 means 30% is chain, matching the spawn/despawn target.
+        max_len_to_chain = init_cable_max_len * 0.3
+        self.num_init_segments = max(4, int(max_len_to_chain / self.seg_equilibrium_len) + 1)
+
+        # Compile only enough segments for the initial state plus buffer
+        if ENABLE_RECOMPILE:
+            self.compiled_seg_count = min(self.num_init_segments + self.recompile_buffer, self.max_seg_num)
+        else:
+            self.compiled_seg_count = self.max_seg_num
+
+        # Current anchor position in satellite body frame — persists across recompiles
+        self._current_anchor_body_pos = np.array(self.sat_attach_pos, dtype=np.float64)
+
+        # Creates the lean physics model
+        self.xml = self._create_model_xml(self.compiled_seg_count)
         self.model = mujoco.MjModel.from_xml_string(self.xml, None)
         self.data = mujoco.MjData(self.model)
 
-        # Save the IDs of key elements of the model
-        self.cylinder_jnt_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "cylinder_rotation")
-        self.av_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "av_body")
-        # self.av_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "av_free_joint")
+        # Create full-size display model for the viewer (never recompiled)
+        display_xml = self._create_model_xml(self.max_seg_num)
+        self.display_model = mujoco.MjModel.from_xml_string(display_xml, None)
+        self.display_data = mujoco.MjData(self.display_model)
 
-        # Get IDs for key nodes and joints in the simulation
-        self.cable_body_ids = []
-        self.cable_geom_ids = []
-        self.cable_tendon_ids = []
-        self.cable_jnt_ids = []
+        # Build ID caches for physics model
+        self._rebuild_id_caches()
+
+        # Build ID caches for display model
+        self._display_cable_body_ids = []
+        self._display_cable_geom_ids = []
+        self._display_cable_jnt_ids = []
+        self._display_cable_tendon_ids = []
+        self._display_cylinder_jnt_id = mujoco.mj_name2id(self.display_model, mujoco.mjtObj.mjOBJ_JOINT, "cylinder_rotation")
+        self._display_av_body_id = mujoco.mj_name2id(self.display_model, mujoco.mjtObj.mjOBJ_BODY, "av_body")
+        self._display_attachment_body_id = mujoco.mj_name2id(self.display_model, mujoco.mjtObj.mjOBJ_BODY, "attachment_body")
         for i in range(self.max_seg_num):
-            self.cable_body_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f"cable_{i}"))
-            self.cable_geom_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, f"cable_geom_{i}"))
-            self.cable_jnt_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"cable_free_{i}"))
-
+            self._display_cable_body_ids.append(mujoco.mj_name2id(self.display_model, mujoco.mjtObj.mjOBJ_BODY, f"cable_{i}"))
+            self._display_cable_geom_ids.append(mujoco.mj_name2id(self.display_model, mujoco.mjtObj.mjOBJ_GEOM, f"cable_geom_{i}"))
+            self._display_cable_jnt_ids.append(mujoco.mj_name2id(self.display_model, mujoco.mjtObj.mjOBJ_JOINT, f"cable_free_{i}"))
             if i < self.max_seg_num - 1:
-                self.cable_tendon_ids.append(
-                    mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_TENDON, f"cable_tendon_{i}"))
+                self._display_cable_tendon_ids.append(
+                    mujoco.mj_name2id(self.display_model, mujoco.mjtObj.mjOBJ_TENDON, f"cable_tendon_{i}"))
+
+        # Deactivate all tendons in display model (we only use it for rendering positions)
+        for i in range(self.max_seg_num - 1):
+            tid = self._display_cable_tendon_ids[i]
+            self.display_model.tendon_stiffness[tid] = 0
+            self.display_model.tendon_damping[tid] = 0
+
+        # Pre-compute numpy arrays for vectorized sync_display
+        self._phys_cyl_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "cylinder")
+        self._disp_cyl_body = mujoco.mj_name2id(self.display_model, mujoco.mjtObj.mjOBJ_BODY, "cylinder")
+        self._disp_cable_body_arr = np.array(self._display_cable_body_ids, dtype=np.intp)
+        self._disp_cable_geom_arr = np.array(self._display_cable_geom_ids, dtype=np.intp)
 
         # Give bodies the proper initial conditions
         qvel_addr = self.model.jnt_dofadr[self.cylinder_jnt_id]
@@ -108,8 +155,7 @@ class Simulation:
         init_vel_anchor = np.cross(self.sat_omega * sat_rot_dir, self.sat_attach_pos)
 
         # All cable nodes should have the same velocity component along the cable
-        # This is the velocity that keeps the cable moving as a unit
-        cable_direction = anchor_av_init_dir  # Direction along the cable
+        cable_direction = anchor_av_init_dir
 
         # Project anchor velocity onto cable direction - this is the "pay out" speed
         cable_axial_velocity = (init_vel_anchor @ cable_direction) * cable_direction
@@ -137,7 +183,7 @@ class Simulation:
         self.current_thruster_force = np.zeros(3)
 
         # Deactivate tendons for inactive segments by setting stiffness to 0
-        for i in range(self.num_init_segments - 1, self.max_seg_num - 1):
+        for i in range(self.num_init_segments - 1, self.compiled_seg_count - 1):
             tendon_id = self.cable_tendon_ids[i]
             self.model.tendon_stiffness[tendon_id] = 0
             self.model.tendon_damping[tendon_id] = 0
@@ -146,36 +192,243 @@ class Simulation:
         self.spool_idx = self.num_init_segments - 1
         self.active_count = self.num_init_segments
 
-        # Tension tracking
+        # Capstan freeze detection — nodes near the anchor that stop moving relative
+        # to the satellite are frozen and dropped from the physics model on next recompile.
+        self.anchor_idx = 0  # Absolute index of the first node in the physics model
+        self._frozen_body_frame_pos = []  # List of body-frame positions on the satellite
+        self._freeze_vel_history = {}  # Physics idx -> deque of recent relative velocities
+        self._freeze_threshold = 0.005  # m/s — node considered frozen below this
+        self._freeze_window_samples = 10  # Number of samples in the rolling window
+        self._freeze_check_interval = 0.002  # Check every 50ms sim time (10 samples = 0.5s)
+        self._next_freeze_check = 1.0  # Don't check in the first second
+        self._pending_freeze_count = 0  # Contiguous frozen nodes from anchor end
+        self._damping_start = 0  # First physics index receiving lateral damping
+
+        # Tension tracking at 200 Hz simulation time
         self.tension_history = []
         self.time_history = []
+        self._tension_record_interval = 1.0 / 200.0
+        self._next_tension_record_time = 0.0
 
-    def _create_model_xml(self):
-        # Vector from attachment toward origin
+        # Initialize display model with current physics state
+        self.sync_display()
+
+    def body_inertia_world(self, body_name):
+        # Get body ID
+        body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+
+        # 1. Local inertia (diagonal in body frame)
+        # model.body_inertia gives (Ixx, Iyy, Izz)
+        I_body = np.diag(self.model.body_inertia[body_id])
+
+        # 2. Get body orientation in world frame
+        # data.xmat is a flattened 3x3 rotation matrix
+        R = self.data.xmat[body_id].reshape(3, 3)
+
+        # 3. Rotate inertia tensor into world frame
+        I_world = R @ I_body @ R.T
+
+        return I_world
+
+
+    def _rebuild_id_caches(self):
+        self.cylinder_jnt_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "cylinder_rotation")
+        self.av_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "av_body")
+        self.attachment_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "attachment_body")
+
+        self.cable_body_ids = []
+        self.cable_geom_ids = []
+        self.cable_tendon_ids = []
+        self.cable_jnt_ids = []
+        for i in range(self.compiled_seg_count):
+            self.cable_body_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f"cable_{i}"))
+            self.cable_geom_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, f"cable_geom_{i}"))
+            self.cable_jnt_ids.append(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"cable_free_{i}"))
+
+            if i < self.compiled_seg_count - 1:
+                self.cable_tendon_ids.append(
+                    mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_TENDON, f"cable_tendon_{i}"))
+
+        # Numpy arrays for vectorized sync_display
+        self._phys_cyl_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "cylinder")
+        self._phys_cable_body_arr = np.array(self.cable_body_ids, dtype=np.intp)
+        self._phys_cable_geom_arr = np.array(self.cable_geom_ids, dtype=np.intp)
+
+        # Pre-computed DOF addresses for vectorized force application
+        self._cable_dof_adrs = np.array([self.model.jnt_dofadr[jid] for jid in self.cable_jnt_ids], dtype=np.intp)
+
+        # Satellite geom ID (first geom belonging to the cylinder body)
+        cyl_body_id = self._phys_cyl_body
+        self._sat_geom_id = self.model.body_geomadr[cyl_body_id]
+
+        # Reverse lookup: geom ID -> cable index for _get_cable_leave_pos
+        self._geom_id_to_cable_idx = {gid: i for i, gid in enumerate(self.cable_geom_ids)}
+
+        # Per-step cache for _get_cable_leave_pos
+        self._leave_pos_cache = None
+        self._leave_pos_cache_time = -1.0
+        self._cable_leave_idx = 0
+
+    def _recompile_model(self, new_seg_count, anchor_body_frame_pos=None, frozen_this_recompile=0):
+        old_model = self.model
+        old_data = self.data
+        old_compiled = self.compiled_seg_count
+
+        # Save satellite state
+        old_cyl_jnt_id = self.cylinder_jnt_id
+        old_cyl_qpos_adr = old_model.jnt_qposadr[old_cyl_jnt_id]
+        old_cyl_qvel_adr = old_model.jnt_dofadr[old_cyl_jnt_id]
+        saved_cyl_qpos = old_data.qpos[old_cyl_qpos_adr:old_cyl_qpos_adr + 7].copy()
+        saved_cyl_qvel = old_data.qvel[old_cyl_qvel_adr:old_cyl_qvel_adr + 6].copy()
+
+        # Save active cable segment states, skipping freshly frozen nodes
+        # Old physics indices frozen_this_recompile..frozen_this_recompile+active_count-1
+        # map to new physics indices 0..active_count-1
+        num_to_save = min(self.active_count, old_compiled - frozen_this_recompile)
+        saved_cable_qpos = []
+        saved_cable_qvel = []
+        saved_cable_rgba = []
+        for i in range(num_to_save):
+            old_idx = i + frozen_this_recompile
+            jnt_id = self.cable_jnt_ids[old_idx]
+            qpos_adr = old_model.jnt_qposadr[jnt_id]
+            qvel_adr = old_model.jnt_dofadr[jnt_id]
+            saved_cable_qpos.append(old_data.qpos[qpos_adr:qpos_adr + 7].copy())
+            saved_cable_qvel.append(old_data.qvel[qvel_adr:qvel_adr + 6].copy())
+            saved_cable_rgba.append(old_model.geom_rgba[self.cable_geom_ids[old_idx]].copy())
+
+        # Save active tendon stiffness/damping state (also offset by frozen count)
+        saved_tendon_stiffness = []
+        saved_tendon_damping = []
+        for i in range(min(num_to_save - 1, len(self.cable_tendon_ids) - frozen_this_recompile)):
+            old_tid_idx = i + frozen_this_recompile
+            tid = self.cable_tendon_ids[old_tid_idx]
+            saved_tendon_stiffness.append(old_model.tendon_stiffness[tid])
+            saved_tendon_damping.append(old_model.tendon_damping[tid])
+
+        saved_time = old_data.time
+
+        # Recompile with new segment count
+        self.compiled_seg_count = new_seg_count
+        self.xml = self._create_model_xml(new_seg_count, anchor_body_frame_pos=anchor_body_frame_pos)
+        self.model = mujoco.MjModel.from_xml_string(self.xml, None)
+        self.data = mujoco.MjData(self.model)
+        self._rebuild_id_caches()
+
+        # Restore simulation time
+        self.data.time = saved_time
+
+        # Restore satellite state
+        new_cyl_qpos_adr = self.model.jnt_qposadr[self.cylinder_jnt_id]
+        new_cyl_qvel_adr = self.model.jnt_dofadr[self.cylinder_jnt_id]
+        self.data.qpos[new_cyl_qpos_adr:new_cyl_qpos_adr + 7] = saved_cyl_qpos
+        self.data.qvel[new_cyl_qvel_adr:new_cyl_qvel_adr + 6] = saved_cyl_qvel
+
+        # Restore cable segment states
+        for i in range(num_to_save):
+            jnt_id = self.cable_jnt_ids[i]
+            qpos_adr = self.model.jnt_qposadr[jnt_id]
+            qvel_adr = self.model.jnt_dofadr[jnt_id]
+            self.data.qpos[qpos_adr:qpos_adr + 7] = saved_cable_qpos[i]
+            self.data.qvel[qvel_adr:qvel_adr + 6] = saved_cable_qvel[i]
+            self.model.geom_rgba[self.cable_geom_ids[i]] = saved_cable_rgba[i]
+
+        # Restore tendon stiffness/damping for active tendons
+        for i in range(len(saved_tendon_stiffness)):
+            tid = self.cable_tendon_ids[i]
+            self.model.tendon_stiffness[tid] = saved_tendon_stiffness[i]
+            self.model.tendon_damping[tid] = saved_tendon_damping[i]
+
+        # Deactivate tendons for segments beyond active count
+        for i in range(max(self.active_count - 1, 0), self.compiled_seg_count - 1):
+            if i >= len(saved_tendon_stiffness):  # Don't overwrite already-restored tendons
+                tid = self.cable_tendon_ids[i]
+                self.model.tendon_stiffness[tid] = 0
+                self.model.tendon_damping[tid] = 0
+
+        # Recompute body masses for display
+        sat_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "cylinder")
+        self.sat_mass = self.model.body_subtreemass[sat_body_id]
+        self.av_mass = self.model.body_subtreemass[self.av_body_id]
+
+        mujoco.mj_forward(self.model, self.data)
+
+        print(f"  [RECOMPILE] {old_compiled} -> {new_seg_count} segments (active: {self.active_count})")
+
+    def sync_display(self):
+        """Copy physics qpos into display model and run kinematics to update all transforms."""
+        # Copy satellite qpos
+        phys_cyl_qadr = self.model.jnt_qposadr[self.cylinder_jnt_id]
+        disp_cyl_qadr = self.display_model.jnt_qposadr[self._display_cylinder_jnt_id]
+        self.display_data.qpos[disp_cyl_qadr:disp_cyl_qadr + 7] = self.data.qpos[phys_cyl_qadr:phys_cyl_qadr + 7]
+
+        # Place frozen nodes by transforming stored body-frame positions to world frame
+        sat_pos = self.data.xpos[self._phys_cyl_body]
+        sat_quat = self.data.xquat[self._phys_cyl_body]
+        for f_idx in range(self.anchor_idx):
+            body_frame_pos = self._frozen_body_frame_pos[f_idx]
+            world_pos = np.zeros(3)
+            mujoco.mju_rotVecQuat(world_pos, body_frame_pos, sat_quat)
+            world_pos += sat_pos
+            d_adr = self.display_model.jnt_qposadr[self._display_cable_jnt_ids[f_idx]]
+            self.display_data.qpos[d_adr:d_adr + 3] = world_pos
+            self.display_data.qpos[d_adr + 3:d_adr + 7] = sat_quat
+
+        # Copy active cable segment qpos (physics idx i -> display idx anchor_idx + i)
+        for i in range(self.active_count):
+            p_adr = self.model.jnt_qposadr[self.cable_jnt_ids[i]]
+            disp_abs_idx = self.anchor_idx + i
+            d_adr = self.display_model.jnt_qposadr[self._display_cable_jnt_ids[disp_abs_idx]]
+            self.display_data.qpos[d_adr:d_adr + 7] = self.data.qpos[p_adr:p_adr + 7]
+
+        # Update all body/geom/site transforms from qpos (much lighter than mj_forward)
+        mujoco.mj_kinematics(self.display_model, self.display_data)
+
+        # Show frozen nodes in a distinct color (red = frozen/welded)
+        for f_idx in range(self.anchor_idx):
+            self.display_model.geom_rgba[self._display_cable_geom_ids[f_idx]] = [1, 0, 0, 1]
+
+        # Color active segments by role: yellow (undamped), cyan (damped), green (spool)
+        for i in range(self.active_count):
+            disp_abs_idx = self.anchor_idx + i
+            if i == self.spool_idx:
+                color = [0, 1, 0, 1]  # Green spool
+            elif i >= self._damping_start:
+                color = [0, 0.8, 1, 1]  # Cyan damped
+            else:
+                color = [1, 1, 0, 1]  # Yellow undamped
+            self.display_model.geom_rgba[self._display_cable_geom_ids[disp_abs_idx]] = color
+
+        # Hide inactive display segments beyond active range
+        first_inactive = self.anchor_idx + self.active_count
+        if first_inactive < self.max_seg_num:
+            inactive_gids = self._disp_cable_geom_arr[first_inactive:]
+            self.display_model.geom_rgba[inactive_gids] = [0.5, 0.5, 0.5, 0]
+
+    def _create_model_xml(self, num_segments, anchor_body_frame_pos=None):
+        # Anchor position in satellite body frame (where cable_0 attaches)
+        attach_pos = anchor_body_frame_pos if anchor_body_frame_pos is not None else self._current_anchor_body_pos
+
+        # Vector from attachment toward AV
         anchor_av_init_dir = self.av_init_pos - self.sat_attach_pos
         init_cable_max_len = np.linalg.norm(anchor_av_init_dir)
         anchor_av_init_dir /= init_cable_max_len
 
-        # Calculate number of segments so spool is just a little bit in front of the origin. This ensures the free
-        # link is created in the right direction and has some (short) length
-        max_len_to_chain = init_cable_max_len - self.seg_equilibrium_len * 0.1
-        init_segments = int(max_len_to_chain / self.seg_equilibrium_len) + 1  # +1 because of the sign post problem
-
         # Calculate positions for each node at equilibrium spacing
         active_positions = []
-        for i in range(0, init_segments):
+        for i in range(0, self.num_init_segments):
             pos = self.sat_attach_pos + anchor_av_init_dir * (i * self.seg_equilibrium_len)
             active_positions.append(pos)
 
         # Build cable bodies with sites
         cable_bodies = ""
         cable_tendons = ""
-        for i in range(self.max_seg_num):
-            if i < init_segments:
+        for i in range(num_segments):
+            if i < self.num_init_segments:
                 pos = active_positions[i]
-                color = "1 1 0 0"  # Invisible — cable rendered by render_cable()
+                color = "1 1 0 1"
             else:
-                pos = self.av_init_pos + ((i - init_segments) * self.seg_equilibrium_len) * anchor_av_init_dir
+                pos = self.av_init_pos + ((i - self.num_init_segments) * self.seg_equilibrium_len) * anchor_av_init_dir
                 color = "0.5 0.5 0.5 0"
 
             cable_bodies += f"""
@@ -188,20 +441,17 @@ class Simulation:
             </body>
             """
 
-            if i < self.max_seg_num - 1:  # There are only MAX_SEGMENTS - 1 tendons, again, because of the signpost problem
+            if i < num_segments - 1:  # There are only num_segments - 1 tendons (signpost problem)
                 cable_tendons += f"""
-                <spatial name="cable_tendon_{i}" springlength="{self.cable_seg_len}" 
+                <spatial name="cable_tendon_{i}" springlength="{self.cable_seg_len}"
                         stiffness="{self.cable_stiffness}" damping="{self.cable_damping}" limited="false">
                     <site site="cable_site_{i}"/>
                     <site site="cable_site_{i + 1}"/>
                 </spatial>"""
 
-        # Load the mesh files, taking care to reposition the bodies to the origin
-        cwd = Path.cwd()
-        # sat_obj_file = load_mesh(cwd / "3DModels" / "SatelliteNGPayload.obj")
-        sat_obj_file = load_mesh(cwd / "3DModels" / "OffsetCMSatellite_NGPayload.obj")
-        av_obj_file = load_mesh(cwd / "3DModels" / "AV_1_0p5_0p5.obj")
-        background_im_file = str(cwd / "3DModels" / "Earth5.png")
+        sat_obj_file = self._sat_obj_file
+        av_obj_file = self._av_obj_file
+        background_im_file = self._background_im_file
 
         # Next build the main XML defining the simulation
         xml = f"""
@@ -246,10 +496,10 @@ class Simulation:
                         {self.cable_friction[2]}" condim="6" material="sat_mat" margin="0.002"
                         solimp="0.99 0.999 0.001 0.5 2" solref="0.0005 1"/>  # Margin sets collisions to start 1 mm away from surface
 
-                    <site name="attachment_point" pos="{self.sat_attach_pos[0]} {self.sat_attach_pos[1]} 
-                            {self.sat_attach_pos[2]}" size="0.05" rgba="1 0.5 0 1"/>
-                    <body name="attachment_body" pos="{self.sat_attach_pos[0]} {self.sat_attach_pos[1]} 
-                            {self.sat_attach_pos[2]}">
+                    <site name="attachment_point" pos="{attach_pos[0]} {attach_pos[1]}
+                            {attach_pos[2]}" size="0.05" rgba="1 0.5 0 1"/>
+                    <body name="attachment_body" pos="{attach_pos[0]} {attach_pos[1]}
+                            {attach_pos[2]}">
                         <geom name="attachment_geom" type="sphere" size="0.01" mass="0.001" contype="0" conaffinity="0" rgba="0 0 0 0"/>
                     </body>
                 </body>
@@ -259,22 +509,87 @@ class Simulation:
             </worldbody>
 
             <tendon>
+                <spatial name="cable_anchor_tendon" springlength="0"
+                        stiffness="{self.cable_stiffness}" damping="{self.cable_damping}" limited="false">
+                    <site site="attachment_point"/>
+                    <site site="cable_site_0"/>
+                </spatial>
                 {cable_tendons}
             </tendon>
-
-            <equality>
-                <connect name="cable_attachment" body1="cable_0" body2="attachment_body" 
-                         anchor="0 0 0" solref="0.0005 1" solimp="0.99 0.999 0.0001"/>
-            </equality>
         </mujoco>
         """
 
-        return xml, init_segments, anchor_av_init_dir
+        return xml
 
     def _get_pos(self, idx):
         return self.data.xpos[self.cable_body_ids[idx]].copy()
 
+    def _get_cable_leave_pos(self):
+        """Find where the cable departs the satellite surface.
+
+        Uses vectorized numpy on the contact arrays to find the highest-index
+        cable node still touching the satellite mesh. Caches per step so the
+        second call (from _maybe_despawn) is free.
+        """
+        # Return cached result if already computed this step
+        t = self.data.time
+        if self._leave_pos_cache_time == t:
+            return self._leave_pos_cache
+
+        ncon = self.data.ncon
+        if ncon == 0:
+            result = self.data.xpos[self.attachment_body_id].copy()
+            self._cable_leave_idx = 0
+            self._leave_pos_cache = result
+            self._leave_pos_cache_time = t
+            return result
+
+        # Vectorized: read all contact geom pairs at once
+        geom1 = self.data.contact.geom1[:ncon]
+        geom2 = self.data.contact.geom2[:ncon]
+        sat_id = self._sat_geom_id
+
+        # Find contacts where one geom is the satellite
+        sat_in_g1 = geom1 == sat_id
+        sat_in_g2 = geom2 == sat_id
+
+        # The other geom in each satellite contact
+        other_geom = np.where(sat_in_g1, geom2, np.where(sat_in_g2, geom1, -1))
+
+        # Build a set of active cable geom IDs for fast lookup
+        cable_geom_set = self._phys_cable_geom_arr[:self.active_count]
+
+        # Check which "other" geoms are cable geoms
+        is_cable = np.isin(other_geom, cable_geom_set)
+
+        if not np.any(is_cable):
+            result = self.data.xpos[self.attachment_body_id].copy()
+            self._cable_leave_idx = 0
+        else:
+            # Map geom IDs back to cable indices using the lookup table
+            cable_geoms_in_contact = other_geom[is_cable]
+            # Find the max cable index among contacts
+            max_idx = 0
+            for cg in cable_geoms_in_contact:
+                idx = self._geom_id_to_cable_idx.get(int(cg), -1)
+                if idx > max_idx:
+                    max_idx = idx
+
+            # Enforce monotonic increase — the leave point can only advance along the
+            # cable, never jump backward (settled nodes may lose contacts transiently)
+            max_idx = max(max_idx, self._cable_leave_idx)
+
+            self._cable_leave_idx = max_idx
+            result = self._get_pos(max_idx)
+
+        self._leave_pos_cache = result
+        self._leave_pos_cache_time = t
+        return result
+
     def step(self):
+        # Compute cable leave point once per step — used by tension, spawn, and despawn
+        self._get_cable_leave_pos()
+
         # Apply tension force on spool - must be done before mj_step
         self._apply_tension_and_forces()
 
@@ -283,7 +598,66 @@ class Simulation:
 
         self._maybe_spawn()
         self._maybe_despawn()
-        self._record_tension()
+
+        if self.data.time >= self._next_freeze_check:
+            self._check_frozen_nodes()
+            self._next_freeze_check = self.data.time + self._freeze_check_interval
+
+        if self.data.time >= self._next_tension_record_time:
+            self._record_tension()
+            self._next_tension_record_time = self.data.time + self._tension_record_interval
+
+    def _check_frozen_nodes(self):
+        """Detect cable nodes near the anchor that have stopped moving relative to the satellite."""
+        from collections import deque
+
+        if self.active_count <= 4:
+            return
+
+        # Get satellite velocity state
+        cyl_qvel_adr = self.model.jnt_dofadr[self.cylinder_jnt_id]
+        v_sat = self.data.qvel[cyl_qvel_adr:cyl_qvel_adr + 3]
+        omega_sat_local = self.data.qvel[cyl_qvel_adr + 3:cyl_qvel_adr + 6]
+        R_sat = self.data.xmat[self._phys_cyl_body].reshape(3, 3)
+        omega_sat = R_sat @ omega_sat_local
+        pos_sat = self.data.xpos[self._phys_cyl_body]
+
+        # Check nodes from anchor end (physics index 0) outward, up to half the chain
+        max_check = min(self.active_count - 3, self.active_count // 2)
+        contiguous_frozen = 0
+
+        for i in range(max_check):
+            # Cable node velocity
+            cable_qvel_adr = self.model.jnt_dofadr[self.cable_jnt_ids[i]]
+            v_cable = self.data.qvel[cable_qvel_adr:cable_qvel_adr + 3]
+
+            # Satellite velocity at cable node's position
+            pos_cable = self.data.xpos[self.cable_body_ids[i]]
+            v_sat_at_cable = v_sat + np.cross(omega_sat, pos_cable - pos_sat)
+
+            # Relative velocity in the plane orthogonal to the cable direction
+            v_rel = v_cable - v_sat_at_cable
+            pos_next = self.data.xpos[self.cable_body_ids[i + 1]]
+            cable_dir = pos_next - pos_cable
+            cable_len = np.linalg.norm(cable_dir)
+            if cable_len > 1e-9:
+                cable_dir /= cable_len
+                v_rel = v_rel - np.dot(v_rel, cable_dir) * cable_dir
+            speed_rel = np.linalg.norm(v_rel)
+
+            # Append to rolling window
+            if i not in self._freeze_vel_history:
+                self._freeze_vel_history[i] = deque(maxlen=self._freeze_window_samples)
+            self._freeze_vel_history[i].append(speed_rel)
+
+            # Node is frozen only if the max over the full window is below threshold
+            history = self._freeze_vel_history[i]
+            if len(history) == self._freeze_window_samples and max(history) < self._freeze_threshold:
+                contiguous_frozen += 1
+            else:
+                break  # Must be contiguous from anchor
+
+        self._pending_freeze_count = contiguous_frozen
 
     def _record_tension(self):
         self.time_history.append(self.data.time)
@@ -305,36 +679,89 @@ class Simulation:
         self.tension_history.append(tensions)
 
     def _apply_tension_and_forces(self):
-        # STEP 1: Apply tension to the rope (and the corresponding opposing force on the AV)
-        spool_pos = self._get_pos(self.spool_idx)
-        body_id = self.cable_body_ids[self.spool_idx]
-
-        # Direction from spool TOWARD origin (along the free link)
-        # This pulls the spool away from the chain/cylinder, creating tension
-        toward_origin = self._get_av_pos() - spool_pos
-        dist = np.linalg.norm(toward_origin)
-
-        # if dist > 1e-6:
-        direction = toward_origin / dist
-        force = direction * self.cable_tension
-
-        # Clear any existing applied forces first
-        self.data.xfrc_applied[body_id, :] = 0
-
-        # Use mj_applyFT to properly apply force and torque
+        av_pos = np.array(self._get_av_pos(), dtype=np.float64)
         torque_vec = np.zeros(3, dtype=np.float64)
-
-        # Create array to receive the generalized forces
-        # Applies the forces to the rope
         qfrc_applied = np.zeros(self.model.nv, dtype=np.float64)
-        mujoco.mj_applyFT(self.model, self.data, force, torque_vec, spool_pos, body_id, qfrc_applied)
 
-        # Now apply the reaction forces on the AV
-        thruster_force = self.thruster_react_func(force)
+        # Apply full tension at the spool node only
+        spool_pos = self.data.xpos[self.cable_body_ids[self.spool_idx]]
+        toward_av = av_pos - spool_pos
+        dist = np.linalg.norm(toward_av)
+        if dist > 1e-9:
+            direction = toward_av / dist
+            force = direction * self.cable_tension
+            body_id = self.cable_body_ids[self.spool_idx]
+            mujoco.mj_applyFT(self.model, self.data, force, torque_vec, spool_pos, body_id, qfrc_applied)
+
+        # Reaction force on the AV
+        overall_dir = toward_av / dist if dist > 1e-9 else np.zeros(3)
+        thruster_force = self.thruster_react_func(overall_dir * self.cable_tension)
         self.current_thruster_force = thruster_force.copy()
         mujoco.mj_applyFT(self.model, self.data, thruster_force, torque_vec,
-                          self._get_av_pos(), self.av_body_id, qfrc_applied)
-        self.data.qfrc_applied[:] = qfrc_applied  # Note this adds instead of re
+                          av_pos, self.av_body_id, qfrc_applied)
+
+        # Vectorized lateral damping: applied to nodes from leave_idx+4 through spool_idx.
+        # Damps velocity orthogonal to the local tendon direction.
+        lateral_damping = 0.1
+        damping_start = min(self._cable_leave_idx + 4, self.spool_idx)
+        n_damped = self.spool_idx - damping_start + 1
+
+        if n_damped > 0 and self.spool_idx > 0:
+            # Read all active positions in one shot
+            body_ids = self._phys_cable_body_arr[:self.spool_idx + 1]
+            all_pos = self.data.xpos[body_ids]  # (spool_idx+1, 3)
+
+            # Slice to damped range
+            d_start = damping_start
+            d_end = self.spool_idx + 1  # exclusive
+
+            # Compute tendon directions from neighbors for damped nodes
+            # For interior nodes: dir = pos[i+1] - pos[i-1]
+            # For first damped (if d_start==0): dir = pos[1] - pos[0]
+            # For last damped (spool_idx): dir = pos[i] - pos[i-1]
+            if d_start > 0:
+                prev_pos = all_pos[d_start - 1:d_end - 1]  # i-1 for each damped node
+            else:
+                # First node uses forward difference
+                prev_pos = np.empty((n_damped, 3))
+                prev_pos[0] = all_pos[0]
+                prev_pos[1:] = all_pos[d_start:d_end - 1]
+
+            if d_end <= self.spool_idx:
+                next_pos = all_pos[d_start + 1:d_end + 1]  # i+1 for each damped node
+            else:
+                # Last node uses backward difference
+                next_pos = np.empty((n_damped, 3))
+                next_pos[:-1] = all_pos[d_start + 1:d_end]
+                next_pos[-1] = all_pos[self.spool_idx]
+
+            tendon_dirs = next_pos - prev_pos  # (n_damped, 3)
+            tendon_lens = np.linalg.norm(tendon_dirs, axis=1, keepdims=True)
+            tendon_lens = np.maximum(tendon_lens, 1e-9)
+            tendon_dirs /= tendon_lens
+
+            # Read velocities for damped nodes via fancy indexing (no Python loop)
+            dof_adrs = self._cable_dof_adrs[d_start:d_end]
+            vel_indices = dof_adrs[:, None] + np.arange(3)  # (n_damped, 3) index array
+            vels = self.data.qvel[vel_indices]  # (n_damped, 3)
+
+            # Compute lateral velocity: v - (v·d)*d
+            axial_proj = np.sum(vels * tendon_dirs, axis=1, keepdims=True)
+            lateral_vels = vels - axial_proj * tendon_dirs
+
+            # Damping forces
+            damp_forces = -lateral_damping * lateral_vels  # (n_damped, 3)
+
+            # Write directly to qfrc_applied (for freejoint bodies at worldbody, the
+            # linear DOFs are at dof_adr:dof_adr+3 and mj_applyFT just writes there)
+            for j in range(n_damped):
+                a = int(dof_adrs[j])
+                qfrc_applied[a:a + 3] += damp_forces[j]
+
+            # Store damping range for color updates at render time
+            self._damping_start = d_start
+
+        self.data.qfrc_applied[:] = qfrc_applied
 
     def _get_av_pos(self):
         # start_addr = self.model.jnt_dofadr[self.av_joint_id]
@@ -342,16 +769,69 @@ class Simulation:
 
         return self.av_init_pos[0], self.av_init_pos[1], self.av_init_pos[2]
 
+    def _world_to_sat_body_frame(self, world_pos):
+        """Convert a world-frame position to the satellite's body frame."""
+        sat_pos = self.data.xpos[self._phys_cyl_body].copy()
+        sat_quat = self.data.xquat[self._phys_cyl_body].copy()
+        # Compute inverse rotation: negate the quaternion
+        sat_quat_inv = np.zeros(4)
+        mujoco.mju_negQuat(sat_quat_inv, sat_quat)
+        # Rotate (world_pos - sat_pos) by inverse quaternion
+        delta = np.array(world_pos, dtype=np.float64) - sat_pos
+        body_frame_pos = np.zeros(3)
+        mujoco.mju_rotVecQuat(body_frame_pos, delta, sat_quat_inv)
+        return body_frame_pos
+
+    def _freeze_anchor_nodes(self, freeze_count):
+        """Freeze `freeze_count` nodes from the anchor end: store body-frame positions and
+        prepare for recompilation that drops them from the physics model."""
+        if freeze_count <= 0:
+            return
+
+        # Store body-frame positions of nodes being frozen
+        for i in range(freeze_count):
+            world_pos = self._get_pos(i)
+            body_pos = self._world_to_sat_body_frame(world_pos)
+            self._frozen_body_frame_pos.append(body_pos)
+
+        # The new anchor is at the position of the first surviving node (old physics
+        # index freeze_count), so that the anchor tendon doesn't yank it
+        new_cable0_world_pos = self._get_pos(freeze_count)
+        new_anchor_body_pos = self._world_to_sat_body_frame(new_cable0_world_pos)
+        self._current_anchor_body_pos = new_anchor_body_pos
+
+        # Update indices
+        self.anchor_idx += freeze_count
+        self.spool_idx -= freeze_count
+        self.active_count -= freeze_count
+
+        # Shift freeze tracking indices to match new physics model
+        self._freeze_vel_history = {k - freeze_count: v
+                                    for k, v in self._freeze_vel_history.items()
+                                    if k >= freeze_count}
+        self._pending_freeze_count = 0
+
+        print(f"  [FREEZE] Froze {freeze_count} nodes, anchor_idx now {self.anchor_idx}, "
+              f"active: {self.active_count}")
+
+        return new_anchor_body_pos
+
     def _maybe_spawn(self):
         if self.active_count < self.max_seg_num:
             spool_pos = self._get_pos(self.spool_idx)
+            av_pos = np.array(self._get_av_pos())
 
-            # Calculate free link length (spool to origin)
-            free_link_length = np.linalg.norm(self._get_av_pos() - spool_pos)
+            free_link_length = np.linalg.norm(av_pos - spool_pos)
 
-            if free_link_length > self.seg_equilibrium_len * 1.1:
+            # Target free link is 90% of the distance from the cable's departure
+            # point on the satellite surface to the AV
+            cable_leave_pos = self._get_cable_leave_pos()
+            target_free_link = np.linalg.norm(av_pos - cable_leave_pos) * 0.7
+
+            # Spawn only when free link has grown more than 1.1 segments above target
+            if free_link_length > target_free_link + self.seg_equilibrium_len * 1.1:
                 print(f"\n=== SPAWN TRIGGER t={self.data.time:.4f}s ===")
-                print(f"Free link length: {free_link_length:.4f}m > threshold {self.seg_equilibrium_len:.4f}m")
+                print(f"Free link: {free_link_length:.4f}m > target {target_free_link:.4f}m + {self.seg_equilibrium_len * 1.1:.4f}m")
                 self._spawn_segment()
 
     def _spawn_segment(self):
@@ -360,6 +840,23 @@ class Simulation:
         mujoco.mj_forward(self.model, self.data)
 
         new_idx = self.active_count
+
+        # Recompile if we've run out of compiled segments — also drop frozen nodes
+        if new_idx >= self.compiled_seg_count:
+            anchor_pos = None
+            frozen_now = 0
+            if self._pending_freeze_count > 0:
+                frozen_now = self._pending_freeze_count
+                anchor_pos = self._freeze_anchor_nodes(frozen_now)
+                # After freeze, active_count changed, recalculate
+                new_idx = self.active_count
+
+            if ENABLE_RECOMPILE:
+                new_count = min(new_idx + self.recompile_buffer, self.max_seg_num)
+                self._recompile_model(new_count, anchor_body_frame_pos=anchor_pos,
+                                      frozen_this_recompile=frozen_now)
+                mujoco.mj_forward(self.model, self.data)
+
         old_spool = self.spool_idx
 
         old_spool_pos = self._get_pos(old_spool)
@@ -392,8 +889,8 @@ class Simulation:
         self.model.tendon_damping[tendon_id] = self.cable_damping
 
         # Update visual colors (keep invisible — cable rendered by render_cable)
-        self.model.geom_rgba[self.cable_geom_ids[new_idx]] = [0, 1, 0, 0]
-        self.model.geom_rgba[self.cable_geom_ids[old_spool]] = [1, 1, 0, 0]
+        self.model.geom_rgba[self.cable_geom_ids[new_idx]] = [0, 1, 0, 1]  # Green spool node
+        self.model.geom_rgba[self.cable_geom_ids[old_spool]] = [1, 1, 0, 1]  # Yellow chain node
 
         # Update spool index and active count
         self.spool_idx = new_idx
@@ -404,17 +901,22 @@ class Simulation:
         mujoco.mj_forward(self.model, self.data)
 
     def _maybe_despawn(self):
+        if self.spool_idx <= 3:  # Keep at least 4 segments
+            return
+
         spool_pos = self._get_pos(self.spool_idx)
+        av_pos = np.array(self._get_av_pos())
 
-        # Calculate free link length (spool to AV)
-        free_link_length = np.linalg.norm(self._get_av_pos() - spool_pos)
+        free_link_length = np.linalg.norm(av_pos - spool_pos)
 
-        # Despawn threshold - when free link is very short, absorb the spool back
-        despawn_threshold = self.seg_equilibrium_len * 0.1  # 10% of equilibrium length
+        # Target free link is 90% of distance from cable departure point to AV
+        cable_leave_pos = self._get_cable_leave_pos()
+        target_free_link = np.linalg.norm(av_pos - cable_leave_pos) * 0.7
 
-        if free_link_length < despawn_threshold:
+        # Despawn when free link has shrunk more than 0.1 segments below target
+        if free_link_length < target_free_link - self.seg_equilibrium_len * 0.1:
             print(f"\n=== DESPAWN TRIGGER t={self.data.time:.4f}s ===")
-            print(f"Free link length: {free_link_length:.4f}m < threshold {despawn_threshold:.4f}m")
+            print(f"Free link: {free_link_length:.4f}m < target {target_free_link:.4f}m - {self.seg_equilibrium_len * 0.1:.4f}m")
             self._despawn_segment()
 
     def _despawn_segment(self):
@@ -431,29 +933,28 @@ class Simulation:
         self.model.tendon_stiffness[tendon_id] = 0
         self.model.tendon_damping[tendon_id] = 0
 
-        # Move the old spool segment back to inactive position (behind AV)
+        # Disable contacts on the despawned body so it can't interfere
+        old_geom_id = self.cable_geom_ids[old_spool]
+        self.model.geom_contype[old_geom_id] = 0
+        self.model.geom_conaffinity[old_geom_id] = 0
+
+        # Move the old spool segment far away and zero its velocity
         old_spool_jnt_id = self.cable_jnt_ids[old_spool]
         qpos_adr = self.model.jnt_qposadr[old_spool_jnt_id]
         qvel_adr = self.model.jnt_dofadr[old_spool_jnt_id]
 
-        # Calculate inactive position (behind AV along cable direction)
-        av_pos = self._get_av_pos()
-        new_spool_pos = self._get_pos(new_spool)
-        away_from_sat = av_pos - new_spool_pos
-        away_from_sat_dir = away_from_sat / np.linalg.norm(away_from_sat)
+        # Place it far from anything (behind AV, one segment length per inactive body)
+        av_pos = np.array(self._get_av_pos(), dtype=np.float64)
+        inactive_offset = (old_spool - self.active_count + 1) * self.seg_equilibrium_len
+        inactive_pos = av_pos + np.array([0, inactive_offset + 50, 0])
 
-        inactive_pos = av_pos + away_from_sat_dir * (
-                    (old_spool - self.num_init_segments + 1) * self.seg_equilibrium_len)
-
-        # Set position and zero velocity
         self.data.qpos[qpos_adr:qpos_adr + 3] = inactive_pos
         self.data.qpos[qpos_adr + 3:qpos_adr + 7] = [1, 0, 0, 0]
         self.data.qvel[qvel_adr:qvel_adr + 6] = 0
 
-        # Update visual colors (keep invisible — cable rendered by render_cable)
-        # TODO parameterize the colors
-        self.model.geom_rgba[self.cable_geom_ids[old_spool]] = [0.5, 0.5, 0.5, 0]
-        self.model.geom_rgba[self.cable_geom_ids[new_spool]] = [0, 1, 0, 0]
+        # Update visual colors
+        self.model.geom_rgba[old_geom_id] = [0.5, 0.5, 0.5, 0]  # Hide despawned node
+        self.model.geom_rgba[self.cable_geom_ids[new_spool]] = [0, 1, 0, 1]  # Green spool node
 
         # Update spool index and active count
         self.spool_idx = new_spool
@@ -461,8 +962,18 @@ class Simulation:
 
         print(f"  new spool_idx: {self.spool_idx}, active_count: {self.active_count}")
 
+        # Recompile to shed excess DOFs if we have too many unused segments
+        if ENABLE_RECOMPILE and self.compiled_seg_count - self.active_count > 2 * self.recompile_buffer:
+            new_count = self.active_count + self.recompile_buffer
+            self._recompile_model(new_count)
+
+        # Allow the leave index to drop by 1 since the spool retracted
+        if self._cable_leave_idx > 0:
+            self._cable_leave_idx -= 1
+
         # Forward again to update state
         mujoco.mj_forward(self.model, self.data)
+
 
     def plot_tension(self):
         plt.figure(figsize=(14, 8))
@@ -558,7 +1069,7 @@ class Simulation:
         up /= np.linalg.norm(up)
 
         # Compute the visible extents at the lookat plane
-        fovy = np.radians(self.model.vis.global_.fovy)
+        fovy = np.radians(self.display_model.vis.global_.fovy)
         half_height = dist * np.tan(fovy / 2.0)
 
         # Try to get actual viewport aspect ratio from the viewer; fall back to 16:9
@@ -595,23 +1106,35 @@ class Simulation:
             g.label = text
             scene.ngeom += 1
 
-    def render_cable(self, scene):
-        spool_pos = self._get_pos(self.spool_idx)
+    def _get_display_pos(self, abs_idx):
+        """Get world position of absolute cable index from display model."""
+        return self.display_data.xpos[self._display_cable_body_ids[abs_idx]].copy()
 
+    def render_cable(self, scene):
+        # Absolute index of spool in display model
+        spool_abs = self.anchor_idx + self.spool_idx
+        spool_pos = self._get_display_pos(spool_abs)
+
+        # Free link from AV to spool
         g = scene.geoms[scene.ngeom]
         mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, self.cable_visual_radius, self._get_av_pos(), spool_pos)
         g.rgba[:] = [1.0, 0.4, 0.15, 1.0]
-        g.label = ""  # Clear stale label from previous frame
+        g.label = ""
         scene.ngeom += 1
 
-        for i in range(self.spool_idx):
-            p1 = self._get_pos(i)
-            p2 = self._get_pos(i + 1)
+        # Draw all chain segments: frozen + active (absolute indices 0 to spool_abs-1)
+        for abs_i in range(spool_abs):
+            p1 = self._get_display_pos(abs_i)
+            p2 = self._get_display_pos(abs_i + 1)
 
             g = scene.geoms[scene.ngeom]
             mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, self.cable_visual_radius, p1, p2)
-            g.rgba[:] = [1.0, 0.45, 0.15, 1.0]
-            g.label = ""  # Clear stale label from previous frame
+            # Frozen segments in darker red, active in orange
+            if abs_i < self.anchor_idx:
+                g.rgba[:] = [0.8, 0.1, 0.1, 1.0]
+            else:
+                g.rgba[:] = [1.0, 0.45, 0.15, 1.0]
+            g.label = ""
             scene.ngeom += 1
 
 
@@ -631,11 +1154,7 @@ if __name__ == "__main__":
     # sim_num = 0
 
     if use_interactive_viewer:
-        with mujoco.viewer.launch_passive(sim.model, sim.data) as viewer:
-            # viewer.cam.azimuth = 90
-            # viewer.cam.elevation = -20
-            # viewer.cam.distance = 25
-            # viewer.cam.lookat[:] = [0, 0, 0]
+        with mujoco.viewer.launch_passive(sim.display_model, sim.display_data) as viewer:
             viewer.cam.azimuth = -0.8289683948863515
             viewer.cam.elevation = -21.25310724431816
             viewer.cam.distance = 34.68901593838663
@@ -643,35 +1162,59 @@ if __name__ == "__main__":
 
             viewer.opt.frame = mujoco.mjtFrame.mjFRAME_WORLD
             viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_TENDON] = view_tendons
-            sleep(10)
+            sleep(1)
+
+            import time as _time
+            render_interval = 1.0 / 60.0  # Sync display at ~60 Hz real time
+            last_render_wall = _time.monotonic()
+            wall_start = last_render_wall
+
+            # Track sim time vs wall time for performance plotting
+            perf_sim_times = []
+            perf_wall_times = []
+            perf_record_interval = 0.1  # Record every 0.1s sim time
+            next_perf_record = 0.0
 
             while viewer.is_running():
-                sim.step()
+                # Run physics steps until wall clock says it's time to render
+                now = _time.monotonic()
+                while now - last_render_wall < render_interval:
+                    sim.step()
+                    now = _time.monotonic()
+
+                    # Record performance data at fixed sim-time intervals
+                    if sim.data.time >= next_perf_record:
+                        perf_sim_times.append(sim.data.time)
+                        perf_wall_times.append(now - wall_start)
+                        next_perf_record = sim.data.time + perf_record_interval
+
+                last_render_wall = now
+
+                # Sync display once per render frame
+                sim.sync_display()
 
                 with viewer.lock():
                     viewer.user_scn.ngeom = 0
                     sim.render_cable(viewer.user_scn)
                     sim.render_overlay(viewer.user_scn, viewer)
 
-                
-
-
                 if sim.data.time > 5 and not hasattr(sim, 'plotted'):
                     sim.plot_tension()
                     sim.plotted = True
 
+                if sim.data.time > 60 and not hasattr(sim, 'perf_plotted'):
+                    sim.perf_plotted = True
+                    plt.figure(figsize=(10, 6))
+                    plt.plot(perf_wall_times, perf_sim_times, linewidth=2)
+                    plt.xlabel('Wall Clock Time (s)')
+                    plt.ylabel('Simulation Time (s)')
+                    plt.title('Simulation Time vs Wall Clock Time')
+                    plt.grid(True, alpha=0.3)
+                    plt.tight_layout()
+                    plt.show()
+
                 if sim.data.time > 480:
                     exit()
-                # if sim.data.time > 0.5:
-                #     sim = all_simulations[sim_num]
-                #     sim_num += 1
-
-                #     with viewer.lock():
-                #         viewer.m = sim.model
-                #         viewer.d = sim.data
-
-                #     viewer.sync()
-
 
                 viewer.sync()
 
