@@ -208,9 +208,9 @@ class Simulation:
 
         # Cache mesh files to reduce computational cost of a model recompilation
         cwd = Path.cwd()
-        self._sat_obj_file = load_mesh(cwd / "3DModels" / "SatelliteNGPayload.obj")
-        self._av_obj_file = load_mesh(cwd / "3DModels" / "AV_1_0p5_0p5.obj")
-        self._background_im_file = str(cwd / "3DModels" / "Earth5.png")
+        self._sat_obj_file = load_mesh(cwd / "Assets" / "SatelliteNGPayload.obj")
+        self._av_obj_file = load_mesh(cwd / "Assets" / "AV_1_0p5_0p5.obj")
+        self._background_im_file = str(cwd / "Assets" / "Earth5.png")
 
         # Compute initial segment count and direction (needed before first compile)
         anchor_av_init_dir = self.av_init_pos - self.sat_attach_pos
