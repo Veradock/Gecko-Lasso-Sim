@@ -31,6 +31,33 @@ SHOW_INACTIVE_SEG = False  # Whether to show inactive nodes in the viewer (a lin
 CABLE_VISUAL_RADIUS = 0.07  # Size of the cable connecting the point masses on the display. Not physical. Units of m.
 CABLE_NODE_RADIUS = 0.15  # Radius of the point masses on the cable on the display. Not physical! Units of m.
 
+# Node and cable colors (RGBA)
+COLOR_FROZEN = [1, 0, 0, 1]           # Red — frozen/welded nodes
+COLOR_SPOOL = [0, 1, 0, 1]            # Green — spool node
+COLOR_DAMPED = [0, 0.8, 1, 1]         # Cyan — damped nodes
+COLOR_UNDAMPED = [1, 1, 0, 1]         # Yellow — undamped nodes
+COLOR_FREE_LINK = [1.0, 0.4, 0.15, 1.0]    # Orange — free link from AV to spool
+COLOR_FROZEN_SEG = [0.8, 0.1, 0.1, 1.0]    # Dark red — frozen chain segments
+COLOR_ACTIVE_SEG = [1.0, 0.45, 0.15, 1.0]  # Orange — active chain segments
+COLOR_INACTIVE = [0.5, 0.5, 0.5, 0]        # Invisible gray — inactive/pre-spawned nodes
+COLOR_SATELLITE = [0.78, 0.82, 0.88, 1]    # Light gray-blue — satellite material
+COLOR_AV = [0.3, 0.55, 0.95, 1]            # Blue — AV material
+COLOR_GROUND = [0.2, 0.2, 0.2, 1]          # Dark gray — ground plane material
+
+# Density of the satellite material. Right now, the density is homogenous. Non-homogenous densities are possible but
+# require manually calculating the inertial tensor and center of mass and specifying them in the XML
+SAT_MATERIAL_DENSITY = 7000  # Density of the satellite (kg/m^3). 7000 corresponds to aluminum.
+
+# Contact solver parameters for cable-satellite collisions
+CONTACT_MARGIN = 0.001        # Distance (m) at which contact constraints activate before geometric penetration
+CONTACT_SOLREF_DAMPRATIO = 1  # Damping ratio for contact spring for contact forces (1 = critically damped)
+CONTACT_SOLREF_STIFFNESS = 0.4  # Dimensionless constant relating contact timeconst to sqrt(mass/tension)
+
+# (dmin, dmax, width, midpoint, power) — constant impedance
+# dmin == dmax so the behavior scales properly regardless of cable tension (ie with proper values, the simulation will
+# remain stable and well-behaves over tensions spanning at least 2 orders of magnitude
+CONTACT_SOLIMP = (0.95, 0.95, 0.001, 0.5, 2)
+
 # Whether to recompile the simulation to add and freeze nodes
 #   False:  spawn all nodes at the start of the simulation and solve the full simulation at every time step. Simplest
 #           logic, most computationally intensive
@@ -69,6 +96,11 @@ SPAWN_NEW_NODE_GROWTH_THRESHOLD = 1.1
 DESPAWN_NODE_SHRINK_THRESHOLD = 0.1
 
 
+def _rgba_str(color):
+    """Convert an RGBA color list to a MuJoCo XML rgba string."""
+    return f"{color[0]} {color[1]} {color[2]} {color[3]}"
+
+
 def load_mesh(path: Path) -> Path:
     """Load a .obj mesh, make it watertight, center it on its center of mass, and export
     a cleaned copy for MuJoCo. This is necessary since .obj files exported from CAD
@@ -100,8 +132,8 @@ class Simulation:
                  thruster_react_func = lambda torque_vec: -1 * torque_vec, cable_tension: float = 10,
                  cable_stiffness: float = 7000, axial_damping_ratio: float = 5, lateral_damping_ratio: float = 0.7,
                  cable_pt_mass: float = 0.000259, cable_node_diameter: float = 0.01, cable_friction: tuple = (0.7, 0.2, 0.2),
-                 cable_seg_len: float = 0.5, free_link_cable_ratio: float = 0.7, min_nodes_before_sat: int = 4,
-                 max_seg_num: int = 10000, time_step: float = 0.00005, imp_ratio: float = 5, freeze_speed: float = 0.005,
+                 cable_seg_len: float = 0.5, free_link_cable_ratio: float = 0.7, max_seg_num: int = 10000,
+                 time_step: float = 0.00005, imp_ratio: float = 10, freeze_speed: float = 0.005,
                  freeze_time: float = 0.1, freeze_sample_interval: float = 0.002):
         """Initialize the simulation, compile the MuJoCo physics and display models, and set initial conditions for the
         satellite and cable.
@@ -129,7 +161,6 @@ class Simulation:
             cable_seg_len: Unstretched rest length between adjacent cable nodes (m).
             free_link_cable_ratio: Minimum free-link length as a fraction of the anchor-to-AV distance. May be
                 overridden by min_nodes_before_sat.
-            min_nodes_before_sat: Minimum number of cable nodes between the AV and the satellite at simulation start.
             max_seg_num: Maximum number of cable nodes allowed in the simulation.
             time_step: Physics integration timestep (s). Values in the ~10-50 us range work well.
             imp_ratio: MuJoCo impedance ratio for friction constraint solving.
@@ -170,6 +201,11 @@ class Simulation:
         equilibrium_cable_stretch = self.cable_tension / self.cable_stiffness
         self.seg_equilibrium_len = self.cable_seg_len + equilibrium_cable_stretch
 
+        # Contact spring timeconst scales as sqrt(mass/tension) to maintain consistent penetration depth across
+        # different tension and mass configurations
+        contact_timeconst = CONTACT_SOLREF_STIFFNESS * np.sqrt(cable_pt_mass / cable_tension)
+        self.contact_solref = (contact_timeconst, CONTACT_SOLREF_DAMPRATIO)
+
         # Cache mesh files to reduce computational cost of a model recompilation
         cwd = Path.cwd()
         self._sat_obj_file = load_mesh(cwd / "3DModels" / "SatelliteNGPayload.obj")
@@ -183,9 +219,7 @@ class Simulation:
 
         # Chain covers (1 - free_link_fraction) of the initial cable length.
         # The free link is the first connecting the AV to the rest of the chain
-        # TODO this should have some error checking against a case when min_nodes_before_sat is too large for the gap
-        max_len_to_chain = init_cable_max_len * (1 - free_link_cable_ratio)
-        self.num_init_segments = max(min_nodes_before_sat, int(max_len_to_chain / self.seg_equilibrium_len) + 1)
+        self.num_init_segments = int(init_cable_max_len * (1 - free_link_cable_ratio) / self.seg_equilibrium_len) + 1
 
         if ENABLE_RECOMPILE:
             # Compile only enough segments for the initial state plus buffer
@@ -290,7 +324,7 @@ class Simulation:
         # readability and durability against changes in XML structure
         self.cylinder_jnt_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "cylinder_rotation")
         self.av_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "av_body")
-        self.attachment_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "attachment_body")
+        self.attachment_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "attachment_point")
 
         self._phys_cable_body_arr = np.empty(self.compiled_seg_count, dtype=np.intp)
         self._phys_cable_geom_arr = np.empty(self.compiled_seg_count, dtype=np.intp)
@@ -406,7 +440,7 @@ class Simulation:
         for f_idx in range(self.anchor_idx):
             mujoco.mju_rotVecQuat(world_pos, self._frozen_body_frame_pos[f_idx], sat_quat)
             positions[f_idx] = world_pos + sat_pos
-            colors[f_idx] = [1, 0, 0, 1]  # Red = frozen/welded
+            colors[f_idx] = COLOR_FROZEN
 
         # Active nodes: read positions from physics qpos
         for i in range(self.active_count):
@@ -415,11 +449,11 @@ class Simulation:
             positions[abs_idx] = self.data.qpos[p_adr:p_adr + 3]
 
             if i == self.spool_idx:
-                colors[abs_idx] = [0, 1, 0, 1]  # Green = spool
+                colors[abs_idx] = COLOR_SPOOL
             elif i >= self._damping_start:
-                colors[abs_idx] = [0, 0.8, 1, 1]  # Cyan = damped
+                colors[abs_idx] = COLOR_DAMPED
             else:
-                colors[abs_idx] = [1, 1, 0, 1]  # Yellow = undamped
+                colors[abs_idx] = COLOR_UNDAMPED
 
         return positions, colors
 
@@ -434,7 +468,7 @@ class Simulation:
         Args:
             num_segments: Total number of cable body segments to include in the XML.
             anchor_body_frame_pos: Satellite-body-frame position of the cable anchor site. If None, the current anchor
-                position (_current_anchor_body_pos) is used. This is either the inital anchor point or the last frozen
+                position (_current_anchor_body_pos) is used. This is either the initial anchor point or the last frozen
                 node.
         """
         # Anchor position in satellite body frame (where cable_0 attaches)
@@ -445,8 +479,12 @@ class Simulation:
         init_cable_max_len = np.linalg.norm(anchor_av_dir)
         anchor_av_dir /= init_cable_max_len
 
-        # Calculate positions for all nodes at equilibrium spacing along the cable direction
-        offsets = np.arange(num_segments) * self.seg_equilibrium_len
+        # Calculate positions for all nodes at equilibrium spacing along the cable direction.
+        # The anchor tendon has springlength=0, so its equilibrium stretch under cable_tension is
+        # cable_tension / cable_stiffness. Offset all nodes by this amount so the anchor tendon starts at its
+        # equilibrium length rather.
+        anchor_equilibrium_stretch = self.cable_tension / self.cable_stiffness
+        offsets = np.arange(num_segments) * self.seg_equilibrium_len + anchor_equilibrium_stretch
         node_locations = self.sat_attach_pos + np.outer(offsets, anchor_av_dir)
 
         # Build cable bodies with sites
@@ -454,7 +492,7 @@ class Simulation:
         cable_tendons = ""
         for i in range(num_segments):
             pos = node_locations[i]
-            color = "1 1 0 1" if i < self.num_init_segments else "0.5 0.5 0.5 0"  # Active or inactive coloring
+            color = _rgba_str(COLOR_UNDAMPED) if i < self.num_init_segments else _rgba_str(COLOR_INACTIVE)
 
             cable_bodies += f"""
             <body name="cable_{i}" pos="{pos[0]} {pos[1]} {pos[2]}">
@@ -480,22 +518,17 @@ class Simulation:
             <option gravity="0 0 0" timestep="{self.time_step}" integrator="implicit" 
                 cone="elliptic" impratio="{self.imp_ratio}"/>
 
-
             <visual>
                 <quality shadowsize="4096"/>
                 <headlight diffuse="0.5 0.5 0.5" specular="0.2 0.2 0.2" ambient="0.2 0.2 0.2"/>
             </visual>
 
             <asset>
-                <!--texture type="skybox" builtin="gradient" rgb1="0.1 0.1 0.2" rgb2="0.3 0.3 0.4" width="512" height="512"/-->
                 <texture type="skybox" file="{self._background_im_file}" rgb1="0.1 0.1 0.2" rgb2="0.3 0.3 0.4"/>
-                
-                <!--material name="gecko_lasso_image_material" texture="gecko_lasso_texture" specular="1" shininess="0.5"/-->
-                
-                <material name="cylinder_mat" rgba="0.3 0.5 0.8 0.8"/>
-                <material name="sat_mat" rgba="0.78 0.82 0.88 1" emission="0.35" specular="0.3" shininess="0.15"/>
-                <material name="av_mat" rgba="0.3 0.55 0.95 1" emission="0.3" specular="0.3" shininess="0.15"/>
-                <material name="ground_mat" rgba="0.2 0.2 0.2 1" reflectance="0.1"/>
+
+                <material name="sat_mat" rgba="{_rgba_str(COLOR_SATELLITE)}" emission="0.35" specular="0.3" shininess="0.15"/>
+                <material name="av_mat" rgba="{_rgba_str(COLOR_AV)}" emission="0.3" specular="0.3" shininess="0.15"/>
+                <material name="ground_mat" rgba="{_rgba_str(COLOR_GROUND)}" reflectance="0.1"/>
                 <mesh name="sat_mesh" file="{self._sat_obj_file}" inertia="exact"/>
                 <mesh name="av_mesh" file="{self._av_obj_file}" inertia="exact"/>
             </asset>
@@ -506,23 +539,20 @@ class Simulation:
                  <body name="av_body" pos="{self.av_init_pos[0]} {self.av_init_pos[1]} {self.av_init_pos[2]}">
                     <!--freejoint name="av_free_joint"/-->
                     <geom type="mesh" mesh="av_mesh" contype="4" conaffinity="2" friction="0 0 0" condim="6" material="av_mat"/>
-                    <site name="cable_origin" pos="0 0 0" size="0.06" rgba="0 1 0 1"/>
+                    <site name="cable_origin" pos="0 0 0" size="0.06" rgba="{_rgba_str(COLOR_SPOOL)}"/>
                 </body>
-
 
                 <body name="cylinder" pos="0 0 0">
                     <freejoint name="cylinder_rotation"/>
                     <geom type="mesh" mesh="sat_mesh" contype="2" conaffinity="1"
-                        density="2700" friction="{self.cable_friction[0]} {self.cable_friction[1]} 
-                        {self.cable_friction[2]}" condim="6" material="sat_mat" margin="0.002"
-                        solimp="0.99 0.999 0.001 0.5 2" solref="0.0005 1"/>  # Margin sets collisions to start 1 mm away from surface
+                        density="{SAT_MATERIAL_DENSITY}" friction="{self.cable_friction[0]} {self.cable_friction[1]} 
+                        {self.cable_friction[2]}" condim="6" material="sat_mat" margin="{CONTACT_MARGIN}"
+                        solimp="{CONTACT_SOLIMP[0]} {CONTACT_SOLIMP[1]} {CONTACT_SOLIMP[2]} {CONTACT_SOLIMP[3]}
+                                {CONTACT_SOLIMP[4]}"
+                        solref="{self.contact_solref[0]} {self.contact_solref[1]}" priority="1"/>
 
-                    <site name="attachment_point" pos="{attach_pos[0]} {attach_pos[1]}
-                            {attach_pos[2]}" size="0.05" rgba="1 0.5 0 1"/>
-                    <body name="attachment_body" pos="{attach_pos[0]} {attach_pos[1]}
-                            {attach_pos[2]}">
-                        <geom name="attachment_geom" type="sphere" size="0.01" mass="0.001" contype="0" conaffinity="0" rgba="0 0 0 0"/>
-                    </body>
+                    <site name="attachment_point" pos="{attach_pos[0]} {attach_pos[1]} {attach_pos[2]}"
+                        size="0.05" rgba="{_rgba_str(COLOR_FROZEN)}"/>
                 </body>
 
             {cable_bodies}
@@ -566,7 +596,7 @@ class Simulation:
             return self._leave_pos_cache
 
         if self.data.ncon == 0:
-            result = self.data.xpos[self.attachment_body_id].copy()
+            result = self.data.site_xpos[self.attachment_site_id].copy()
             self._cable_leave_idx = 0
             self._leave_pos_cache = result
             self._leave_pos_cache_time = self.data.time
@@ -590,7 +620,7 @@ class Simulation:
         is_cable = np.isin(other_geom, cable_geom_set)
 
         if not np.any(is_cable):
-            result = self.data.xpos[self.attachment_body_id].copy()
+            result = self.data.site_xpos[self.attachment_site_id].copy()
             self._cable_leave_idx = 0
         else:
             # Map geom IDs back to cable indices using the lookup table
@@ -930,7 +960,6 @@ class Simulation:
         # spikes
         mujoco.mj_forward(self.model, self.data)
 
-    # TODO make all colors parameters
     def _despawn_segment(self):
         """Deactivate the current spool segment: disable its tendon and contacts, move it behind the AV, promote the
         previous segment to spool, and recompile if too many DOFs are unused."""
@@ -959,10 +988,6 @@ class Simulation:
         self.data.qpos[qpos_adr + 3:qpos_adr + 7] = [1, 0, 0, 0]
         self.data.qvel[qvel_adr:qvel_adr + 6] = 0
 
-        # Update visual colors
-        self.model.geom_rgba[self.spool_idx] = [0.5, 0.5, 0.5, 0]  # Hide despawned node
-        self.model.geom_rgba[self._phys_cable_geom_arr[new_spool]] = [0, 1, 0, 1]  # Green spool node
-
         # Update spool index and active count
         self.spool_idx = new_spool
         self.active_count = old_spool  # active_count is now old_spool (not old_spool + 1)
@@ -984,7 +1009,7 @@ class Simulation:
     def plot_tension(self):
         """Plot the tension history of individual cable links and the spool constraint over time. Mainly intended for
         debugging."""
-        plt.figure(figsize=(14, 8))
+        plt.figure(figsize=(14, 8), dpi=500)
         num_constraints = 50
 
         num_to_plot = num_constraints
@@ -1131,7 +1156,7 @@ class Simulation:
             g = scene.geoms[scene.ngeom]
             mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, CABLE_VISUAL_RADIUS,
                                  self._get_av_pos(), positions[spool_abs])
-            g.rgba[:] = [1.0, 0.4, 0.15, 1.0]
+            g.rgba[:] = COLOR_FREE_LINK
             g.label = ""
             scene.ngeom += 1
 
@@ -1144,9 +1169,9 @@ class Simulation:
                                  positions[abs_i], positions[abs_i + 1])
             # Frozen segments darker red, active segments orange
             if abs_i < self.anchor_idx:
-                g.rgba[:] = [0.8, 0.1, 0.1, 1.0]
+                g.rgba[:] = COLOR_FROZEN_SEG
             else:
-                g.rgba[:] = [1.0, 0.45, 0.15, 1.0]
+                g.rgba[:] = COLOR_ACTIVE_SEG
             g.label = ""
             scene.ngeom += 1
 
