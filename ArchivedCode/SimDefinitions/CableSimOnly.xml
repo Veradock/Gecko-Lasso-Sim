@@ -1,0 +1,42 @@
+<mujoco model="kinematic_chain_actuator_in_xml">
+  <compiler inertiafromgeom="true"/>
+  <option integrator="RK4" timestep="0.002" gravity="0 0 0"/>
+
+  <visual>
+    <headlight ambient="0.3 0.3 0.3" diffuse="0.6 0.6 0.6" specular="0.1 0.1 0.1"/>
+    <map znear="0.01"/>
+  </visual>
+
+  <worldbody>
+    <geom name="ground" type="plane" size="5 5 0.1" rgba="0.2 0.3 0.2 1"/>
+    <light diffuse="1 1 1" pos="0 0 3" dir="0 0 -1"/>
+
+    <site name="anchor" pos="0 0 1.5"/>
+
+    <!-- Kinematic chain of 5 links -->
+    <body name="link1" pos="0 0 1.5">
+      <joint type="ball" name="j1"/>
+      <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" mass="0.05" rgba="1 1 0 1"/>
+
+      <body name="link2" pos="0.2 0 0">
+        <joint type="ball" name="j2"/>
+        <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" mass="0.05" rgba="1 1 0 1"/>
+
+        <body name="link3" pos="0.2 0 0">
+          <joint type="ball" name="actuator_joint"/>
+          <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" mass="0.05" rgba="1 1 0 1"/>
+
+          </body>
+        </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- The motor is attached to the slide joint of the invisible slider -->
+    <motor name="pull_motor" joint="actuator_joint" gear="1" ctrlrange="-100 100"/>
+  </actuator>
+
+  <sensor>
+    <actuatorfrc name="force_sensor" actuator="pull_motor"/>
+  </sensor>
+</mujoco>

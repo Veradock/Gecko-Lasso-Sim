@@ -1,0 +1,43 @@
+<mujoco>
+  <!-- The default integrator (ImplicitFast) leads to gradual numerical drift that leads to stability issues -->
+  <option gravity="0 0 0" viscosity="0" integrator="RK4"/>
+
+  <asset>
+    <mesh name="sat_mesh" file="{sat_obj_file}"/>
+    <mesh name="av_mesh" file="{av_obj_file}"/>
+  </asset>
+
+  <worldbody>
+    <light diffuse=".5 .5 .5" pos="0 0 3" dir="0 0 -1"/>
+
+
+    <body name="sat_body" pos="0 0 0">
+      <joint name="joint1" type="free"/>
+      <geom type="mesh" mesh="sat_mesh" rgba="0.9 0.2 0.2 1"/>
+
+      <site name="sat_anchor" pos="{sat_anchor_pos}" size="0.01"/>
+
+      <!-- Placeholder for the rope beads that help prescribe the rope behavior -->
+      {chain_bodies}
+
+    </body>
+
+    <body name="av_body" pos="0 0 0">
+      <joint name="joint2" type="free"/>
+      <geom type="mesh" mesh="av_mesh" rgba="0.2 0.2 0.9 1" />
+      <site name="av_anchor" pos="0 0 0" size="0.01"/>
+    </body>
+
+  </worldbody>
+
+  <!-- Placeholder for tendon that goes through the bodies to help simulate the rope dynamics -->
+  <tendon>
+      {chain_tendons}
+  </tendon>
+
+  <actuator>
+    <general name="winch" tendon="string_tendon"/>
+  </actuator>
+
+
+</mujoco>

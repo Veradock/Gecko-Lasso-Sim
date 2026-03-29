@@ -1,0 +1,360 @@
+<mujoco model="capstan_cable_wrap">
+  <compiler angle="radian" autolimits="true"/>
+  
+  <option gravity="0 0 0" timestep="0.001" iterations="50" solver="Newton" tolerance="1e-10"/>
+  
+  <size nconmax="2000" njmax="4000"/>
+  
+  <default>
+    <default class="cable_segment">
+      <geom type="capsule" size="0.04" mass="0.2" condim="4" friction="1.0 0.005 0.001" rgba="1.0 0.35 0.1 1"/>
+      <joint type="ball" damping="0.1" armature="0.01"/>
+    </default>
+    <default class="visual_only">
+      <geom contype="0" conaffinity="0"/>
+    </default>
+  </default>
+  
+  <visual>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
+    <rgba haze="0.1 0.15 0.2 1"/>
+    <quality shadowsize="4096"/>
+  </visual>
+  
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.05 0.1 0.2" rgb2="0 0 0" width="512" height="512"/>
+    <material name="cylinder_mat" rgba="0.25 0.45 0.65 0.7" specular="0.8" shininess="0.9"/>
+    <material name="origin_mat" rgba="0.2 1.0 0.3 1" emission="0.8"/>
+    <material name="attach_mat" rgba="1.0 0.2 1.0 1" emission="0.8"/>
+    <material name="node_mat" rgba="1.0 1.0 0.2 1" emission="0.3"/>
+  </asset>
+  
+  <worldbody>
+    <body name="cylinder" pos="0 0 0">
+      <joint name="cylinder_rotation" type="hinge" axis="0 0 1" damping="0"/>
+      <geom name="cylinder_geom" type="cylinder" size="2.0 5.0" material="cylinder_mat" condim="4" friction="1.0 0.005 0.001"/>
+      <geom class="visual_only" type="cylinder" size="0.05 6.0" rgba="1 0 0 0.8"/>
+      <site name="attach_site" pos="2.0 0 -2.0" size="0.15" material="attach_mat"/>
+      <body name="cable_0" pos="2.0 0 -2.0" quat="0.7882054380161092 0.0 0.6154122094026356 0.0">
+        <joint name="cable_0_joint" class="cable_segment"/>
+        <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+        <site name="cable_0_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_1" pos="0 0 0.5">
+          <joint name="cable_1_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_1_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_2" pos="0 0 0.5">
+          <joint name="cable_2_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_2_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_3" pos="0 0 0.5">
+          <joint name="cable_3_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_3_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_4" pos="0 0 0.5">
+          <joint name="cable_4_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_4_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_5" pos="0 0 0.5">
+          <joint name="cable_5_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_5_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_6" pos="0 0 0.5">
+          <joint name="cable_6_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_6_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_7" pos="0 0 0.5">
+          <joint name="cable_7_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_7_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_8" pos="0 0 0.5">
+          <joint name="cable_8_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_8_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_9" pos="0 0 0.5">
+          <joint name="cable_9_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_9_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_10" pos="0 0 0.5">
+          <joint name="cable_10_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_10_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_11" pos="0 0 0.5">
+          <joint name="cable_11_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_11_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_12" pos="0 0 0.5">
+          <joint name="cable_12_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_12_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_13" pos="0 0 0.5">
+          <joint name="cable_13_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_13_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_14" pos="0 0 0.5">
+          <joint name="cable_14_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_14_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_15" pos="0 0 0.5">
+          <joint name="cable_15_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_15_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_16" pos="0 0 0.5">
+          <joint name="cable_16_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_16_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_17" pos="0 0 0.5">
+          <joint name="cable_17_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_17_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_18" pos="0 0 0.5">
+          <joint name="cable_18_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_18_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_19" pos="0 0 0.5">
+          <joint name="cable_19_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_19_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_20" pos="0 0 0.5">
+          <joint name="cable_20_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_20_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_21" pos="0 0 0.5">
+          <joint name="cable_21_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_21_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_22" pos="0 0 0.5">
+          <joint name="cable_22_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_22_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_23" pos="0 0 0.5">
+          <joint name="cable_23_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_23_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_24" pos="0 0 0.5">
+          <joint name="cable_24_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_24_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_25" pos="0 0 0.5">
+          <joint name="cable_25_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_25_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_26" pos="0 0 0.5">
+          <joint name="cable_26_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_26_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_27" pos="0 0 0.5">
+          <joint name="cable_27_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_27_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_28" pos="0 0 0.5">
+          <joint name="cable_28_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_28_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_29" pos="0 0 0.5">
+          <joint name="cable_29_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_29_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_30" pos="0 0 0.5">
+          <joint name="cable_30_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_30_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_31" pos="0 0 0.5">
+          <joint name="cable_31_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_31_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_32" pos="0 0 0.5">
+          <joint name="cable_32_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_32_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_33" pos="0 0 0.5">
+          <joint name="cable_33_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_33_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_34" pos="0 0 0.5">
+          <joint name="cable_34_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_34_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_35" pos="0 0 0.5">
+          <joint name="cable_35_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_35_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_36" pos="0 0 0.5">
+          <joint name="cable_36_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_36_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_37" pos="0 0 0.5">
+          <joint name="cable_37_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_37_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_38" pos="0 0 0.5">
+          <joint name="cable_38_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_38_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_39" pos="0 0 0.5">
+          <joint name="cable_39_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_39_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_40" pos="0 0 0.5">
+          <joint name="cable_40_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_40_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_41" pos="0 0 0.5">
+          <joint name="cable_41_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_41_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_42" pos="0 0 0.5">
+          <joint name="cable_42_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_42_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_43" pos="0 0 0.5">
+          <joint name="cable_43_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_43_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_44" pos="0 0 0.5">
+          <joint name="cable_44_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_44_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_45" pos="0 0 0.5">
+          <joint name="cable_45_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_45_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_46" pos="0 0 0.5">
+          <joint name="cable_46_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_46_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_47" pos="0 0 0.5">
+          <joint name="cable_47_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_47_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_48" pos="0 0 0.5">
+          <joint name="cable_48_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_48_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_49" pos="0 0 0.5">
+          <joint name="cable_49_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_49_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_50" pos="0 0 0.5">
+          <joint name="cable_50_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_50_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_51" pos="0 0 0.5">
+          <joint name="cable_51_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_51_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_52" pos="0 0 0.5">
+          <joint name="cable_52_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_52_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_53" pos="0 0 0.5">
+          <joint name="cable_53_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_53_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_54" pos="0 0 0.5">
+          <joint name="cable_54_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_54_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_55" pos="0 0 0.5">
+          <joint name="cable_55_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_55_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_56" pos="0 0 0.5">
+          <joint name="cable_56_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_56_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_57" pos="0 0 0.5">
+          <joint name="cable_57_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_57_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_58" pos="0 0 0.5">
+          <joint name="cable_58_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_58_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        <body name="cable_59" pos="0 0 0.5">
+          <joint name="cable_59_joint" class="cable_segment"/>
+          <geom class="cable_segment" fromto="0 0 0 0 0 0.5"/>
+          <site name="cable_59_end" pos="0 0 0.5" size="0.06" material="node_mat"/>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+        </body>
+    </body>
+    <body name="origin_anchor" pos="10.0 0.0 0.0">
+      <site name="origin_site" size="0.2" material="origin_mat"/>
+    </body>
+  </worldbody>
+  
+  <tendon>
+    <spatial name="origin_tendon" width="0.03" rgba="0.8 0.8 0.2 1" stiffness="50000" damping="1000">
+      <site site="cable_59_end"/>
+      <site site="origin_site"/>
+    </spatial>
+  </tendon>
+  
+  <actuator>
+    <velocity name="cylinder_motor" joint="cylinder_rotation" kv="100000"/>
+  </actuator>
+  
+  <sensor>
+    <jointpos name="cylinder_angle" joint="cylinder_rotation"/>
+    <jointvel name="cylinder_vel" joint="cylinder_rotation"/>
+    <tendonpos name="tendon_length" tendon="origin_tendon"/>
+  </sensor>
+</mujoco>

@@ -1,0 +1,578 @@
+
+<mujoco model="variable_string">
+  <compiler angle="radian" autolimits="true"/>
+
+  <option timestep="0.002" integrator="RK4">
+    <flag contact="disable"/>
+  </option>
+
+  <visual>
+    <headlight active="1" ambient="0.3 0.3 0.3" diffuse="0.6 0.6 0.6" specular="0.1 0.1 0.1"/>
+    <map force="0.1" zfar="30"/>
+  </visual>
+
+  <worldbody>
+    <light pos="0 0 5" dir="0 0 -1" diffuse="1 1 1"/>
+    <geom type="plane" size="5 5 0.1" rgba="0.8 0.8 0.8 1"/>
+
+    <!-- Anchor point fixed to the world -->
+    <site name="anchor_site" pos="0 0 1" size="0.02"/>
+
+    <!-- Mocap body to prescribe motion, and the dynamic body it pulls -->
+    <body name="mover_mocap" pos="0 0 1" mocap="true">
+        <geom type="box" size="0.01 0.01 0.01" rgba="0 0 1 0.5" contype="0" conaffinity="0"/>
+    </body>
+    <body name="mover_body" pos="0 0 1">
+        <joint type="free"/>
+        <geom type="sphere" size="0.03" rgba="0 0 1 1" mass="0.1"/>
+        <site name="mover_attachment_site" size="0.01"/>
+    </body>
+
+    <!-- Chain of bodies representing the string points -->
+    
+    <body name="p_0" pos="0.0 0 1.0">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_0" size="0.005"/>
+    </body>
+    <body name="p_1" pos="0.001 0 0.999">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_1" size="0.005"/>
+    </body>
+    <body name="p_2" pos="0.002 0 0.998">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_2" size="0.005"/>
+    </body>
+    <body name="p_3" pos="0.003 0 0.997">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_3" size="0.005"/>
+    </body>
+    <body name="p_4" pos="0.004 0 0.996">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_4" size="0.005"/>
+    </body>
+    <body name="p_5" pos="0.005 0 0.995">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_5" size="0.005"/>
+    </body>
+    <body name="p_6" pos="0.006 0 0.994">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_6" size="0.005"/>
+    </body>
+    <body name="p_7" pos="0.007 0 0.993">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_7" size="0.005"/>
+    </body>
+    <body name="p_8" pos="0.008 0 0.992">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_8" size="0.005"/>
+    </body>
+    <body name="p_9" pos="0.009000000000000001 0 0.991">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_9" size="0.005"/>
+    </body>
+    <body name="p_10" pos="0.01 0 0.99">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_10" size="0.005"/>
+    </body>
+    <body name="p_11" pos="0.011 0 0.989">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_11" size="0.005"/>
+    </body>
+    <body name="p_12" pos="0.012 0 0.988">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_12" size="0.005"/>
+    </body>
+    <body name="p_13" pos="0.013000000000000001 0 0.987">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_13" size="0.005"/>
+    </body>
+    <body name="p_14" pos="0.014 0 0.986">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_14" size="0.005"/>
+    </body>
+    <body name="p_15" pos="0.015 0 0.985">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_15" size="0.005"/>
+    </body>
+    <body name="p_16" pos="0.016 0 0.984">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_16" size="0.005"/>
+    </body>
+    <body name="p_17" pos="0.017 0 0.983">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_17" size="0.005"/>
+    </body>
+    <body name="p_18" pos="0.018000000000000002 0 0.982">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_18" size="0.005"/>
+    </body>
+    <body name="p_19" pos="0.019 0 0.981">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_19" size="0.005"/>
+    </body>
+    <body name="p_20" pos="0.02 0 0.98">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_20" size="0.005"/>
+    </body>
+    <body name="p_21" pos="0.021 0 0.979">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_21" size="0.005"/>
+    </body>
+    <body name="p_22" pos="0.022 0 0.978">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_22" size="0.005"/>
+    </body>
+    <body name="p_23" pos="0.023 0 0.977">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_23" size="0.005"/>
+    </body>
+    <body name="p_24" pos="0.024 0 0.976">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_24" size="0.005"/>
+    </body>
+    <body name="p_25" pos="0.025 0 0.975">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_25" size="0.005"/>
+    </body>
+    <body name="p_26" pos="0.026000000000000002 0 0.974">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_26" size="0.005"/>
+    </body>
+    <body name="p_27" pos="0.027 0 0.973">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_27" size="0.005"/>
+    </body>
+    <body name="p_28" pos="0.028 0 0.972">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_28" size="0.005"/>
+    </body>
+    <body name="p_29" pos="0.029 0 0.971">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_29" size="0.005"/>
+    </body>
+    <body name="p_30" pos="0.03 0 0.97">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_30" size="0.005"/>
+    </body>
+    <body name="p_31" pos="0.031 0 0.969">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_31" size="0.005"/>
+    </body>
+    <body name="p_32" pos="0.032 0 0.968">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_32" size="0.005"/>
+    </body>
+    <body name="p_33" pos="0.033 0 0.967">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_33" size="0.005"/>
+    </body>
+    <body name="p_34" pos="0.034 0 0.966">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_34" size="0.005"/>
+    </body>
+    <body name="p_35" pos="0.035 0 0.965">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_35" size="0.005"/>
+    </body>
+    <body name="p_36" pos="0.036000000000000004 0 0.964">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_36" size="0.005"/>
+    </body>
+    <body name="p_37" pos="0.037 0 0.963">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_37" size="0.005"/>
+    </body>
+    <body name="p_38" pos="0.038 0 0.962">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_38" size="0.005"/>
+    </body>
+    <body name="p_39" pos="0.039 0 0.961">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_39" size="0.005"/>
+    </body>
+    <body name="p_40" pos="0.04 0 0.96">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_40" size="0.005"/>
+    </body>
+    <body name="p_41" pos="0.041 0 0.959">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_41" size="0.005"/>
+    </body>
+    <body name="p_42" pos="0.042 0 0.958">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_42" size="0.005"/>
+    </body>
+    <body name="p_43" pos="0.043000000000000003 0 0.957">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_43" size="0.005"/>
+    </body>
+    <body name="p_44" pos="0.044 0 0.956">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_44" size="0.005"/>
+    </body>
+    <body name="p_45" pos="0.045 0 0.955">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_45" size="0.005"/>
+    </body>
+    <body name="p_46" pos="0.046 0 0.954">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_46" size="0.005"/>
+    </body>
+    <body name="p_47" pos="0.047 0 0.953">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_47" size="0.005"/>
+    </body>
+    <body name="p_48" pos="0.048 0 0.952">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_48" size="0.005"/>
+    </body>
+    <body name="p_49" pos="0.049 0 0.951">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_49" size="0.005"/>
+    </body>
+    <body name="p_50" pos="0.05 0 0.95">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_50" size="0.005"/>
+    </body>
+    <body name="p_51" pos="0.051000000000000004 0 0.949">
+      <joint type="free" damping="0.1"/>
+      <geom type="sphere" size="0.01" rgba="1 1 0 1" mass="0.001"/>
+      <site name="s_51" size="0.005"/>
+    </body>
+  </worldbody>
+
+  <tendon>
+    <!-- Tendons connecting the points -->
+    <spatial name="tendon_anchor_to_p0" rgba="0.5 0.5 0.5 1">
+        <site site="anchor_site"/>
+        <site site="s_0"/>
+    </spatial>
+    
+    <spatial name="tendon_0" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_0"/>
+        <site site="s_1"/>
+    </spatial>
+    <spatial name="tendon_1" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_1"/>
+        <site site="s_2"/>
+    </spatial>
+    <spatial name="tendon_2" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_2"/>
+        <site site="s_3"/>
+    </spatial>
+    <spatial name="tendon_3" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_3"/>
+        <site site="s_4"/>
+    </spatial>
+    <spatial name="tendon_4" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_4"/>
+        <site site="s_5"/>
+    </spatial>
+    <spatial name="tendon_5" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_5"/>
+        <site site="s_6"/>
+    </spatial>
+    <spatial name="tendon_6" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_6"/>
+        <site site="s_7"/>
+    </spatial>
+    <spatial name="tendon_7" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_7"/>
+        <site site="s_8"/>
+    </spatial>
+    <spatial name="tendon_8" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_8"/>
+        <site site="s_9"/>
+    </spatial>
+    <spatial name="tendon_9" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_9"/>
+        <site site="s_10"/>
+    </spatial>
+    <spatial name="tendon_10" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_10"/>
+        <site site="s_11"/>
+    </spatial>
+    <spatial name="tendon_11" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_11"/>
+        <site site="s_12"/>
+    </spatial>
+    <spatial name="tendon_12" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_12"/>
+        <site site="s_13"/>
+    </spatial>
+    <spatial name="tendon_13" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_13"/>
+        <site site="s_14"/>
+    </spatial>
+    <spatial name="tendon_14" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_14"/>
+        <site site="s_15"/>
+    </spatial>
+    <spatial name="tendon_15" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_15"/>
+        <site site="s_16"/>
+    </spatial>
+    <spatial name="tendon_16" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_16"/>
+        <site site="s_17"/>
+    </spatial>
+    <spatial name="tendon_17" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_17"/>
+        <site site="s_18"/>
+    </spatial>
+    <spatial name="tendon_18" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_18"/>
+        <site site="s_19"/>
+    </spatial>
+    <spatial name="tendon_19" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_19"/>
+        <site site="s_20"/>
+    </spatial>
+    <spatial name="tendon_20" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_20"/>
+        <site site="s_21"/>
+    </spatial>
+    <spatial name="tendon_21" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_21"/>
+        <site site="s_22"/>
+    </spatial>
+    <spatial name="tendon_22" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_22"/>
+        <site site="s_23"/>
+    </spatial>
+    <spatial name="tendon_23" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_23"/>
+        <site site="s_24"/>
+    </spatial>
+    <spatial name="tendon_24" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_24"/>
+        <site site="s_25"/>
+    </spatial>
+    <spatial name="tendon_25" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_25"/>
+        <site site="s_26"/>
+    </spatial>
+    <spatial name="tendon_26" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_26"/>
+        <site site="s_27"/>
+    </spatial>
+    <spatial name="tendon_27" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_27"/>
+        <site site="s_28"/>
+    </spatial>
+    <spatial name="tendon_28" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_28"/>
+        <site site="s_29"/>
+    </spatial>
+    <spatial name="tendon_29" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_29"/>
+        <site site="s_30"/>
+    </spatial>
+    <spatial name="tendon_30" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_30"/>
+        <site site="s_31"/>
+    </spatial>
+    <spatial name="tendon_31" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_31"/>
+        <site site="s_32"/>
+    </spatial>
+    <spatial name="tendon_32" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_32"/>
+        <site site="s_33"/>
+    </spatial>
+    <spatial name="tendon_33" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_33"/>
+        <site site="s_34"/>
+    </spatial>
+    <spatial name="tendon_34" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_34"/>
+        <site site="s_35"/>
+    </spatial>
+    <spatial name="tendon_35" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_35"/>
+        <site site="s_36"/>
+    </spatial>
+    <spatial name="tendon_36" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_36"/>
+        <site site="s_37"/>
+    </spatial>
+    <spatial name="tendon_37" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_37"/>
+        <site site="s_38"/>
+    </spatial>
+    <spatial name="tendon_38" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_38"/>
+        <site site="s_39"/>
+    </spatial>
+    <spatial name="tendon_39" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_39"/>
+        <site site="s_40"/>
+    </spatial>
+    <spatial name="tendon_40" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_40"/>
+        <site site="s_41"/>
+    </spatial>
+    <spatial name="tendon_41" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_41"/>
+        <site site="s_42"/>
+    </spatial>
+    <spatial name="tendon_42" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_42"/>
+        <site site="s_43"/>
+    </spatial>
+    <spatial name="tendon_43" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_43"/>
+        <site site="s_44"/>
+    </spatial>
+    <spatial name="tendon_44" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_44"/>
+        <site site="s_45"/>
+    </spatial>
+    <spatial name="tendon_45" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_45"/>
+        <site site="s_46"/>
+    </spatial>
+    <spatial name="tendon_46" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_46"/>
+        <site site="s_47"/>
+    </spatial>
+    <spatial name="tendon_47" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_47"/>
+        <site site="s_48"/>
+    </spatial>
+    <spatial name="tendon_48" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_48"/>
+        <site site="s_49"/>
+    </spatial>
+    <spatial name="tendon_49" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_49"/>
+        <site site="s_50"/>
+    </spatial>
+    <spatial name="tendon_50" limited="true" range="0 0.2" rgba="0.9 0.2 0.2 1">
+        <site site="s_50"/>
+        <site site="s_51"/>
+    </spatial>
+    <spatial name="tendon_p_last_to_mover" rgba="0.5 0.5 0.5 1">
+        <site site="s_51"/>
+        <site site="mover_attachment_site"/>
+    </spatial>
+  </tendon>
+
+  <actuator>
+    <!--
+    THIS IS THE FINAL, DOCUMENTATION-CONFIRMED CORRECTION:
+    The actuator type is '<general>', which can target a 'tendon'.
+    The gain is 1, so ctrl input directly equals the tensional force.
+    -->
+    
+    <general name="actuator_0" tendon="tendon_0" gainprm="1"/>
+    <general name="actuator_1" tendon="tendon_1" gainprm="1"/>
+    <general name="actuator_2" tendon="tendon_2" gainprm="1"/>
+    <general name="actuator_3" tendon="tendon_3" gainprm="1"/>
+    <general name="actuator_4" tendon="tendon_4" gainprm="1"/>
+    <general name="actuator_5" tendon="tendon_5" gainprm="1"/>
+    <general name="actuator_6" tendon="tendon_6" gainprm="1"/>
+    <general name="actuator_7" tendon="tendon_7" gainprm="1"/>
+    <general name="actuator_8" tendon="tendon_8" gainprm="1"/>
+    <general name="actuator_9" tendon="tendon_9" gainprm="1"/>
+    <general name="actuator_10" tendon="tendon_10" gainprm="1"/>
+    <general name="actuator_11" tendon="tendon_11" gainprm="1"/>
+    <general name="actuator_12" tendon="tendon_12" gainprm="1"/>
+    <general name="actuator_13" tendon="tendon_13" gainprm="1"/>
+    <general name="actuator_14" tendon="tendon_14" gainprm="1"/>
+    <general name="actuator_15" tendon="tendon_15" gainprm="1"/>
+    <general name="actuator_16" tendon="tendon_16" gainprm="1"/>
+    <general name="actuator_17" tendon="tendon_17" gainprm="1"/>
+    <general name="actuator_18" tendon="tendon_18" gainprm="1"/>
+    <general name="actuator_19" tendon="tendon_19" gainprm="1"/>
+    <general name="actuator_20" tendon="tendon_20" gainprm="1"/>
+    <general name="actuator_21" tendon="tendon_21" gainprm="1"/>
+    <general name="actuator_22" tendon="tendon_22" gainprm="1"/>
+    <general name="actuator_23" tendon="tendon_23" gainprm="1"/>
+    <general name="actuator_24" tendon="tendon_24" gainprm="1"/>
+    <general name="actuator_25" tendon="tendon_25" gainprm="1"/>
+    <general name="actuator_26" tendon="tendon_26" gainprm="1"/>
+    <general name="actuator_27" tendon="tendon_27" gainprm="1"/>
+    <general name="actuator_28" tendon="tendon_28" gainprm="1"/>
+    <general name="actuator_29" tendon="tendon_29" gainprm="1"/>
+    <general name="actuator_30" tendon="tendon_30" gainprm="1"/>
+    <general name="actuator_31" tendon="tendon_31" gainprm="1"/>
+    <general name="actuator_32" tendon="tendon_32" gainprm="1"/>
+    <general name="actuator_33" tendon="tendon_33" gainprm="1"/>
+    <general name="actuator_34" tendon="tendon_34" gainprm="1"/>
+    <general name="actuator_35" tendon="tendon_35" gainprm="1"/>
+    <general name="actuator_36" tendon="tendon_36" gainprm="1"/>
+    <general name="actuator_37" tendon="tendon_37" gainprm="1"/>
+    <general name="actuator_38" tendon="tendon_38" gainprm="1"/>
+    <general name="actuator_39" tendon="tendon_39" gainprm="1"/>
+    <general name="actuator_40" tendon="tendon_40" gainprm="1"/>
+    <general name="actuator_41" tendon="tendon_41" gainprm="1"/>
+    <general name="actuator_42" tendon="tendon_42" gainprm="1"/>
+    <general name="actuator_43" tendon="tendon_43" gainprm="1"/>
+    <general name="actuator_44" tendon="tendon_44" gainprm="1"/>
+    <general name="actuator_45" tendon="tendon_45" gainprm="1"/>
+    <general name="actuator_46" tendon="tendon_46" gainprm="1"/>
+    <general name="actuator_47" tendon="tendon_47" gainprm="1"/>
+    <general name="actuator_48" tendon="tendon_48" gainprm="1"/>
+    <general name="actuator_49" tendon="tendon_49" gainprm="1"/>
+    <general name="actuator_50" tendon="tendon_50" gainprm="1"/>
+  </actuator>
+
+  <equality>
+    <!-- Weld the mover body to the mocap body -->
+    <weld body1="mover_body" body2="mover_mocap" solimp="0.9 0.95 0.001" solref="0.02 1"/>
+  </equality>
+
+</mujoco>
+    
