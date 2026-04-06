@@ -1,7 +1,3 @@
-# (1) TODO declaudify this code and push
-# (2) TODO Make the visuals look good
-# (3) TODO export sims and make the website look good!!
-
 """
 Gecko Lasso Simulation — simulation of a cable wrapping, capturing, and detumbling a satellite
 M. Coughlin 2026 created for the BDML research group at Stanford University
